@@ -72,6 +72,12 @@
       "methods": ["get"],
       "read_attributes": "(**)",
       "write_attributes": "(**)"
+    },
+    {
+      "resource_id": "/custom_objects_search/*",
+      "methods": ["post"],
+      "read_attributes": "(**)",
+      "write_attributes": "(**)"
     }
   ]
 }

@@ -1,0 +1,4 @@
+{
+  "description": "When populated, only these custom object types will be considered for analysis and move operations.",
+  "whitelist": []
+}

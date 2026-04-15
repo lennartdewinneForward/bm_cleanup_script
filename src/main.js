@@ -26,6 +26,7 @@ import { registerSetupCommands } from './commands/setup/setup.js';
 import { registerBlacklistCommands } from './commands/setup/actions/blacklist.js';
 import { registerWhitelistCommands } from './commands/setup/actions/whitelist.js';
 import { registerMetaCommands } from './commands/meta/meta.js';
+import { registerCustomObjectCommands } from './commands/custom-objects/customObjects.js';
 
 // ============================================================================
 // CLI ENTRYPOINT
@@ -108,6 +109,22 @@ registerPreferenceCommands(program);
 //   - detect-orphans: Compare BM backup XML against repo meta XMLs to find orphans
 
 registerMetaCommands(program);
+
+// ============================================================================
+// REGISTER CUSTOM OBJECT COMMANDS
+// ============================================================================
+// Location: src/commands/custom-objects/customObjects.js
+// Commands:
+//   - analyze-custom-objects: Analyze CO types across realms (unused, single-realm, shared)
+//   - move-custom-objects: Move single-realm CO types from core to realm-specific folders
+//   - add-to-co-blacklist: Add a CO type pattern to the blacklist
+//   - remove-from-co-blacklist: Remove a CO type pattern from the blacklist
+//   - list-co-blacklist: Show all blacklisted CO type patterns
+//   - add-to-co-whitelist: Add a CO type pattern to the whitelist
+//   - remove-from-co-whitelist: Remove a CO type pattern from the whitelist
+//   - list-co-whitelist: Show all whitelisted CO type patterns
+
+registerCustomObjectCommands(program);
 
 // ============================================================================
 // REGISTER DEBUG COMMANDS

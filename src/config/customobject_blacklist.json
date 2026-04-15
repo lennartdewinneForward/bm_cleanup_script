@@ -1,0 +1,10 @@
+{
+  "description": "Custom object types listed here will never appear in deletion or move candidate lists, even if unused.",
+  "blacklist": [
+    {
+      "type": "exact",
+      "id": "catalogImageAltText",
+      "reason": "might still be used in case we revert the alt text job changes. can be deleted once the alt text job is fixed"
+    }
+  ]
+}

@@ -53,3 +53,9 @@ export {
     confirmCommitPrompt,
     commitMessagePrompt
 } from './metaPrompts.js';
+
+export {
+    confirmMovePrompt,
+    confirmDryRunMovePrompt,
+    selectCustomObjectTypesPrompt
+} from './customObjectPrompts.js';

@@ -859,3 +859,43 @@ export async function patchSitePreferencesGroup(siteId, groupId, instanceType, p
         return null;
     }
 }
+
+// ============================================================================
+// CUSTOM OBJECTS
+// Search custom object instances by type
+// ============================================================================
+
+/**
+ * Check whether any custom object records exist for a given type.
+ * Uses POST /custom_objects_search/{object_type} with count=1.
+ * @param {string} objectType - Custom object type ID
+ * @param {string} realm - Realm name
+ * @returns {Promise<{ exists: boolean, total: number }>} Whether records exist and the total count
+ */
+export async function searchCustomObjects(objectType, realm) {
+    try {
+        const sandbox = getSandboxConfig(realm);
+        const token = await getOAuthToken(sandbox);
+        const url = `https://${sandbox.hostname}/s/-/dw/data/v25_6/custom_objects_search/${encodeURIComponent(objectType)}`;
+        const headers = buildApiHeaders(token);
+        const payload = {
+            query: { match_all_query: {} },
+            start: 0,
+            count: 1
+        };
+        const response = await withRetry(() => axios.post(url, payload, { headers }));
+        const total = response.data.total || 0;
+        return { exists: total > 0, total };
+    } catch (error) {
+        const status = error.response?.status;
+        // 404 means the type doesn't exist on the instance — no records
+        if (status === 404) {
+            return { exists: false, total: 0 };
+        }
+        logError(
+            `Failed to search custom objects for type ${objectType}: `
+            + `${error.response?.data?.message || error.message}`
+        );
+        return { exists: false, total: 0, error: true };
+    }
+}

@@ -13,6 +13,7 @@ const __dirname = path.dirname(__filename);
  */
 const DEFAULT_CONFIG = {
     coreSiteTemplatePath: 'sites/site_template',
+    coreSiteDemoPath: 'sites/site_demo',
     validation: {
         ignoreBmCartridges: true
     },
@@ -144,6 +145,16 @@ export function getAvailableRealms() {
 export function getCoreSiteTemplatePath() {
     const config = loadConfig();
     return config.coreSiteTemplatePath || 'sites/site_template';
+}
+
+/**
+ * Get the core site demo path from config.
+ * Falls back to 'sites/site_demo' if not configured.
+ * @returns {string} Relative path to the core site demo directory
+ */
+export function getCoreSiteDemoPath() {
+    const config = loadConfig();
+    return config.coreSiteDemoPath || 'sites/site_demo';
 }
 
 /**
