@@ -20,6 +20,12 @@ import {
 } from '../helpers/customObjectScanner.js';
 import { filterBlacklisted } from '../helpers/customObjectBlacklistHelper.js';
 import { filterWhitelisted } from '../helpers/customObjectWhitelistHelper.js';
+import {
+    checkOrphanedRecordsForMoves,
+    formatOrphanedRecordWarnings,
+    checkLiveCustomObjectRecords,
+    formatLiveRecordWarnings
+} from '../helpers/customObjectMover.js';
 import { selectRealmsForInstancePrompt, instanceTypePrompt } from '../../prompts/index.js';
 import { getRealmsByInstanceType } from '../../../config/helpers/helpers.js';
 import fs from 'fs';
@@ -170,12 +176,43 @@ export async function analyzeCustomObjects() {
         analysisMap, realmsToProcess
     );
 
+    // --- STEP 6b: Check for live records on SFCC instances (OCAPI) ---
+    let typesWithRecords = new Map();
+    const allCandidateTypes = [...unused, ...[...singleRealm.keys()]];
+    if (allCandidateTypes.length > 0) {
+        logSectionTitle('STEP 6b: Check for Live Records (OCAPI)');
+        console.log('  Checking all realms for existing records...\n');
+        typesWithRecords = await checkLiveCustomObjectRecords(allCandidateTypes, realmsToProcess);
+
+        if (typesWithRecords.size > 0) {
+            console.log(formatLiveRecordWarnings(typesWithRecords));
+        } else {
+            console.log(`  ${LOG_PREFIX.INFO} No live records found.\n`);
+        }
+    }
+
+    // --- STEP 6c: Check for orphaned records in non-target realms ---
+    let orphanedRecords = new Map();
+    if (singleRealm.size > 0 && realmsToProcess.length > 1) {
+        logSectionTitle('STEP 6c: Check for Orphaned Records (OCAPI)');
+        console.log('  Checking non-target realms for existing records...\n');
+        orphanedRecords = await checkOrphanedRecordsForMoves(singleRealm, realmsToProcess);
+
+        if (orphanedRecords.size > 0) {
+            console.log(formatOrphanedRecordWarnings(orphanedRecords));
+        } else {
+            console.log(`  ${LOG_PREFIX.INFO} No orphaned records found.\n`);
+        }
+    }
+
     const report = formatAnalysisReport({
         unused,
         singleRealm,
         multiRealm,
         analysisMap,
         realmSites,
+        typesWithRecords,
+        orphanedRecords,
         repoName
     });
 

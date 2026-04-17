@@ -606,9 +606,10 @@ function formatTypeDetail(typeId, info, realmSites) {
     return detailLines;
 }
 
-export function formatAnalysisReport({ unused, singleRealm, multiRealm, analysisMap, realmSites, repoName }) {
+export function formatAnalysisReport({ unused, singleRealm, multiRealm, analysisMap, realmSites, typesWithRecords, orphanedRecords, repoName }) {
     const lines = [];
     const separator = '='.repeat(80);
+    const dash = '-'.repeat(80);
     const hasDetail = realmSites && realmSites.size > 0;
 
     lines.push(separator);
@@ -626,22 +627,45 @@ export function formatAnalysisReport({ unused, singleRealm, multiRealm, analysis
     lines.push(`  Multi-realm / shared:  ${multiRealm.length} (keep in core)`);
     lines.push('');
 
+    // Live records warning — before classification sections, so QA sees it first
+    if (typesWithRecords && typesWithRecords.size > 0) {
+        lines.push(dash);
+        lines.push(' LIVE RECORDS WARNING');
+        lines.push(dash);
+        lines.push('');
+        lines.push('  The following types have live records on the SFCC instance.');
+        lines.push('  Removing the type definition does NOT delete existing records.');
+        lines.push('  These records must be cleaned up separately via BM or a job.');
+        lines.push('');
+
+        for (const [typeId, realmHits] of typesWithRecords) {
+            const details = realmHits.map(h => `${h.realm}: ${h.total} record(s)`).join(', ');
+            lines.push(`  ⚠  ${typeId} — ${details}`);
+        }
+        lines.push('');
+    }
+
     // Unused section
     if (unused.length > 0) {
-        lines.push('-'.repeat(80));
+        lines.push(dash);
         lines.push(' UNUSED / OBSOLETE (no code references, no realm-specific data)');
-        lines.push('-'.repeat(80));
+        lines.push(dash);
         for (const typeId of unused) {
             lines.push(`  ${typeId}`);
+            if (typesWithRecords && typesWithRecords.has(typeId)) {
+                const hits = typesWithRecords.get(typeId);
+                const detail = hits.map(h => `${h.realm}: ${h.total}`).join(', ');
+                lines.push(`    ⚠ Live records: ${detail}`);
+            }
         }
         lines.push('');
     }
 
     // Single-realm section
     if (singleRealm.size > 0) {
-        lines.push('-'.repeat(80));
+        lines.push(dash);
         lines.push(' SINGLE-REALM (used in 1 realm only — candidates for move)');
-        lines.push('-'.repeat(80));
+        lines.push(dash);
         for (const [typeId, realm] of singleRealm) {
             const info = analysisMap.get(typeId);
             const refs = info ? `${info.codeRefs} code ref(s)` : '';
@@ -649,6 +673,36 @@ export function formatAnalysisReport({ unused, singleRealm, multiRealm, analysis
             if (hasDetail && info) {
                 lines.push(...formatTypeDetail(typeId, info, realmSites));
             }
+            if (typesWithRecords && typesWithRecords.has(typeId)) {
+                const hits = typesWithRecords.get(typeId);
+                const detail = hits.map(h => `${h.realm}: ${h.total}`).join(', ');
+                lines.push(`    ⚠ Live records: ${detail}`);
+            }
+            // Show orphaned records warning inline
+            if (orphanedRecords && orphanedRecords.has(typeId)) {
+                const hits = orphanedRecords.get(typeId);
+                const detail = hits.map(h => `${h.realm}: ${h.total}`).join(', ');
+                lines.push(`    ⚠ ORPHANED in other realms: ${detail}`);
+            }
+        }
+        lines.push('');
+    }
+
+    // Orphaned records summary section
+    if (orphanedRecords && orphanedRecords.size > 0) {
+        lines.push(dash);
+        lines.push(' ⚠ ORPHANED RECORDS — single-realm types with records in other realms');
+        lines.push(dash);
+        lines.push('');
+        lines.push('  These types are classified as single-realm, but live records exist in realms');
+        lines.push('  where the type will no longer be deployed after moving. These records should');
+        lines.push('  be backed up or deleted before moving the type definition.');
+        lines.push('');
+        for (const [typeId, realmHits] of orphanedRecords) {
+            const target = singleRealm.get(typeId) || '?';
+            const details = realmHits.map(h => `${h.realm}: ${h.total} record(s)`).join(', ');
+            lines.push(`  ${typeId} (target: ${target})`);
+            lines.push(`    Records in: ${details}`);
         }
         lines.push('');
     }

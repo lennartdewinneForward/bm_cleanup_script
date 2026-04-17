@@ -33,7 +33,9 @@ import {
     formatDeleteResults,
     formatDeleteReport,
     checkLiveCustomObjectRecords,
-    formatLiveRecordWarnings
+    formatLiveRecordWarnings,
+    checkOrphanedRecordsForMoves,
+    formatOrphanedRecordWarnings
 } from '../helpers/customObjectMover.js';
 import {
     instanceTypePrompt,
@@ -195,8 +197,22 @@ export async function moveCustomObjects(options = {}) {
         return;
     }
 
-    // --- STEP 6: Confirm and execute ---
-    logSectionTitle(`STEP 6: Execute${dryRun ? ' (Dry Run)' : ''}`);
+    // --- STEP 6: Check for orphaned records in non-target realms ---
+    let orphanedRecords = new Map();
+    if (realmsToProcess.length > 1) {
+        logSectionTitle('STEP 6: Check for Orphaned Records (OCAPI)');
+        console.log('  Checking non-target realms for existing records...\n');
+        orphanedRecords = await checkOrphanedRecordsForMoves(selectedMap, realmsToProcess);
+
+        if (orphanedRecords.size > 0) {
+            console.log(formatOrphanedRecordWarnings(orphanedRecords));
+        } else {
+            console.log(`  ${LOG_PREFIX.INFO} No orphaned records found.\n`);
+        }
+    }
+
+    // --- STEP 7: Confirm and execute ---
+    logSectionTitle(`STEP 7: Execute${dryRun ? ' (Dry Run)' : ''}`);
     const { confirm } = await inquirer.prompt(confirmMovePrompt(plan.actions.length));
 
     if (!confirm) {
@@ -219,6 +235,7 @@ export async function moveCustomObjects(options = {}) {
         selectedMap,
         analysisMap,
         realmSites,
+        orphanedRecords,
         results,
         dryRun
     });
@@ -233,7 +250,7 @@ export async function moveCustomObjects(options = {}) {
         console.log(`${LOG_PREFIX.INFO} Move complete.\n`);
     }
 
-    // --- STEP 7: Delete unused types ---
+    // --- STEP 8: Delete unused types ---
     await deleteUnusedTypesPhase({ unused, repoPath, realms: realmsToProcess, instanceType, dryRun });
 
     logRuntime(timer);

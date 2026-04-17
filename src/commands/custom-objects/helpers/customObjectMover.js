@@ -697,6 +697,61 @@ export function formatLiveRecordWarnings(typesWithRecords) {
     return lines.join('\n');
 }
 
+/**
+ * For each single-realm CO type, check non-target realms for live records via OCAPI.
+ * If a type is marked as PNA-only, checks EU05, APAC, GB etc. for existing records.
+ * This detects orphaned records that will remain after moving the definition away.
+ *
+ * @param {Map<string, string>} singleRealmMap - typeId → targetRealm
+ * @param {string[]} allRealms - All realms being processed
+ * @returns {Promise<Map<string, Array<{ realm: string, total: number }>>>}
+ *   Map of typeId → array of { realm, total } for non-target realms that have records
+ */
+export async function checkOrphanedRecordsForMoves(singleRealmMap, allRealms) {
+    const orphanedRecords = new Map();
+
+    for (const [typeId, targetRealm] of singleRealmMap) {
+        const nonTargetRealms = allRealms.filter(r => r !== targetRealm);
+
+        for (const realm of nonTargetRealms) {
+            const result = await searchCustomObjects(typeId, realm);
+            if (result.exists) {
+                if (!orphanedRecords.has(typeId)) {
+                    orphanedRecords.set(typeId, []);
+                }
+                orphanedRecords.get(typeId).push({ realm, total: result.total });
+            }
+        }
+    }
+
+    return orphanedRecords;
+}
+
+/**
+ * Format orphaned record warnings for display.
+ * @param {Map<string, Array<{ realm: string, total: number }>>} orphanedRecords
+ * @returns {string} Formatted warning message
+ */
+export function formatOrphanedRecordWarnings(orphanedRecords) {
+    if (orphanedRecords.size === 0) {
+        return '';
+    }
+
+    const lines = [
+        `${LOG_PREFIX.WARNING} The following single-realm types have live records in OTHER realms:`,
+        '  After moving, these records will no longer have a type definition deployed',
+        '  to those realms. Clean up or back up these records before proceeding.\n'
+    ];
+
+    for (const [typeId, realmHits] of orphanedRecords) {
+        const details = realmHits.map(h => `${h.realm}: ${h.total} record(s)`).join(', ');
+        lines.push(`  ⚠  ${typeId} — ${details}`);
+    }
+
+    lines.push('');
+    return lines.join('\n');
+}
+
 // ============================================================================
 // DELETE PLAN (unused CO types)
 // ============================================================================
@@ -948,7 +1003,7 @@ export function formatDeleteResults(results) {
  * @param {boolean} params.dryRun - Whether this was a dry run
  * @returns {string} Formatted report
  */
-export function formatMoveReport({ repoName, instanceType, realms, selectedMap, analysisMap, realmSites, results, dryRun }) {
+export function formatMoveReport({ repoName, instanceType, realms, selectedMap, analysisMap, realmSites, orphanedRecords, results, dryRun }) {
     const sep = '='.repeat(80);
     const dash = '-'.repeat(80);
     const date = new Date().toISOString().slice(0, 10);
@@ -970,7 +1025,30 @@ export function formatMoveReport({ repoName, instanceType, realms, selectedMap, 
     if (results.errors.length > 0) {
         lines.push(`Errors: ${results.errors.length}`);
     }
+    if (orphanedRecords && orphanedRecords.size > 0) {
+        lines.push(`Orphaned record warnings: ${orphanedRecords.size} type(s)`);
+    }
     lines.push('');
+
+    // Orphaned records section — before the moved types, so QA sees it first
+    if (orphanedRecords && orphanedRecords.size > 0) {
+        lines.push(dash);
+        lines.push(' ⚠ ORPHANED RECORDS — live records in non-target realms');
+        lines.push(dash);
+        lines.push('');
+        lines.push('  These moved types have live records in realms where the type definition');
+        lines.push('  will NO LONGER be deployed. The records still exist on the instance but');
+        lines.push('  have no matching type definition. Back up or delete them.');
+        lines.push('');
+
+        for (const [typeId, realmHits] of orphanedRecords) {
+            const target = selectedMap.get(typeId) || '?';
+            const details = realmHits.map(h => `${h.realm}: ${h.total} record(s)`).join(', ');
+            lines.push(`  ${typeId} (moved to: ${target})`);
+            lines.push(`    Orphaned records in: ${details}`);
+        }
+        lines.push('');
+    }
 
     // Group moved types by target realm
     const byRealm = new Map();
@@ -1006,6 +1084,11 @@ export function formatMoveReport({ repoName, instanceType, realms, selectedMap, 
                     if (sites.length > 0) {
                         lines.push(`      Affected sites: ${sites.join(', ')}`);
                     }
+                }
+                if (orphanedRecords && orphanedRecords.has(typeId)) {
+                    const hits = orphanedRecords.get(typeId);
+                    const detail = hits.map(h => `${h.realm}: ${h.total}`).join(', ');
+                    lines.push(`      ⚠ Orphaned records: ${detail}`);
                 }
             }
             lines.push('');
