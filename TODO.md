@@ -34,7 +34,7 @@ Reads attribute definitions + groups from BM metadata XML instead of individual 
 - [ ] **TEST:** Compare output between OCAPI and metadata modes
 - [ ] Migrate `analyze-preferences` to use metadata mode by default (once validated)
 - [ ] Add metadata freshness checking (prompt to refresh if > 7 days old)
-- [ ] check if the is a way to label prefercnes per cartridge to be able to assign them to a dedecitaed meta folder for each cartridge. core meta = puma meta
+- [ ] check if the is a way to label prefercnes per cartridge to be able to assign them to a dedecitaed meta folder for each cartridge. core meta = brand meta
 
 ### Deprecation Logic (Decision Pending)
 

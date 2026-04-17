@@ -34,6 +34,9 @@ npm-debug.log*
 *.bak
 coverage/
 
+# Reports
+crosscheck_report.txt
+
 # github files
 !.github/instructions
 !.github

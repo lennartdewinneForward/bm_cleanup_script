@@ -741,7 +741,7 @@ The command checks all 12 OCAPI resources and their HTTP methods (21 probes tota
 
 **Example output:**
 ```
-Realm: EU05  (development-eu05-puma.demandware.net)
+Realm: EU05  (development-eu05-brand.demandware.net)
   ✓ Authentication: OK
   Endpoints: 20/21 accessible
 
