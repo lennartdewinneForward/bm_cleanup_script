@@ -51,7 +51,8 @@ export {
     consolidateMetaPrompt,
     consolidationFailurePrompt,
     confirmCommitPrompt,
-    commitMessagePrompt
+    commitMessagePrompt,
+    debugBatchContinuePrompt
 } from './metaPrompts.js';
 
 export {

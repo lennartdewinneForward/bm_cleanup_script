@@ -26,7 +26,7 @@ vi.mock('../../../src/commands/prompts/index.js', () => ({
 }));
 
 vi.mock('../../../src/commands/meta/helpers/metaFileCleanup.js', () => ({
-    buildMetaCleanupPlan: vi.fn(() => ({ actions: [{ type: 'remove', file: 'test.xml' }], skipped: [] })),
+    buildMetaCleanupPlan: vi.fn(() => ({ actions: [{ type: 'remove', attributeId: 'prefA', filePath: 'test.xml' }], skipped: [] })),
     executeMetaCleanupPlan: vi.fn(() => ({
         filesModified: ['/mock/test.xml'],
         filesDeleted: [],
@@ -41,7 +41,9 @@ vi.mock('../../../src/commands/meta/helpers/metaFileCleanup.js', () => ({
         filesModified: []
     })),
     formatPreferenceValueResults: vi.fn(() => '  Pref value results'),
-    stripCustomPrefix: vi.fn(id => id.startsWith('c_') ? id.slice(2) : id)
+    stripCustomPrefix: vi.fn(id => id.startsWith('c_') ? id.slice(2) : id),
+    loadMetaCleanupLogic: vi.fn(() => null),
+    updateMetaCleanupLogicExcludedPaths: vi.fn()
 }));
 
 vi.mock('../../../src/commands/meta/helpers/metaConsolidation.js', () => ({
@@ -106,7 +108,19 @@ vi.mock('../../../src/commands/meta/helpers/gitHelper.js', () => ({
     stageAllChanges: vi.fn(),
     commitChanges: vi.fn(() => true),
     getStagedDiffStat: vi.fn(() => ' 2 files changed'),
-    generateCleanupBranchName: vi.fn(() => 'cleanup/P3-development')
+    generateCleanupBranchName: vi.fn(() => 'cleanup/P3-development'),
+    getChangedFiles: vi.fn(() => ({ added: [], modified: [], deleted: [] }))
+}));
+
+vi.mock('../../../src/commands/meta/helpers/metaChangeValidator.js', () => ({
+    validateMetaChanges: vi.fn(() => ({
+        removedAttributes: { total: 0, approved: 0, unapproved: [] },
+        blacklistViolations: [],
+        createdFiles: { total: 0, valid: 0, issues: [] },
+        summary: ''
+    })),
+    formatValidationReport: vi.fn(() => '  Validation: all checks passed'),
+    fixXmlIndentation: vi.fn(() => ({ fixed: [], skipped: [] }))
 }));
 
 vi.mock('inquirer', () => ({
@@ -141,8 +155,14 @@ import {
     stageAllChanges,
     commitChanges,
     getStagedDiffStat,
-    generateCleanupBranchName
+    generateCleanupBranchName,
+    getChangedFiles
 } from '../../../src/commands/meta/helpers/gitHelper.js';
+import {
+    validateMetaChanges,
+    formatValidationReport,
+    fixXmlIndentation
+} from '../../../src/commands/meta/helpers/metaChangeValidator.js';
 import {
     consolidateMetaFiles,
     formatConsolidationResults
@@ -165,7 +185,7 @@ function setupDefaults() {
     getSiblingRepositories.mockReturnValue([]);
 
     buildMetaCleanupPlan.mockReturnValue({
-        actions: [{ type: 'remove', file: 'test.xml' }], skipped: []
+        actions: [{ type: 'remove', attributeId: 'prefA', filePath: 'test.xml' }], skipped: []
     });
     executeMetaCleanupPlan.mockReturnValue({
         filesModified: ['/mock/test.xml'], filesDeleted: [], filesCreated: []
@@ -200,6 +220,16 @@ function setupDefaults() {
     commitChanges.mockReturnValue(true);
     getStagedDiffStat.mockReturnValue(' 2 files changed');
     generateCleanupBranchName.mockReturnValue('cleanup/P3-development');
+    getChangedFiles.mockReturnValue({ added: [], modified: [], deleted: [] });
+
+    validateMetaChanges.mockReturnValue({
+        removedAttributes: { total: 0, approved: 0, unapproved: [] },
+        blacklistViolations: [],
+        createdFiles: { total: 0, valid: 0, issues: [] },
+        summary: ''
+    });
+    formatValidationReport.mockReturnValue('  Validation: all checks passed');
+    fixXmlIndentation.mockReturnValue({ fixed: [], skipped: [] });
 }
 
 beforeEach(() => {
@@ -233,11 +263,21 @@ describe('registerMetaCommands', () => {
         expect(cmd.description()).toContain('orphan');
     });
 
-    it('registers exactly 2 commands', () => {
+    it('registers validate-meta-changes command', () => {
         const program = new Command();
         program.exitOverride();
         registerMetaCommands(program);
-        expect(program.commands).toHaveLength(2);
+
+        const cmd = program.commands.find(c => c.name() === 'validate-meta-changes');
+        expect(cmd).toBeDefined();
+        expect(cmd.description()).toContain('Verify');
+    });
+
+    it('registers exactly 3 commands', () => {
+        const program = new Command();
+        program.exitOverride();
+        registerMetaCommands(program);
+        expect(program.commands).toHaveLength(3);
     });
 });
 
@@ -464,7 +504,7 @@ describe('metaCleanup', () => {
         expect(commitChanges).toHaveBeenCalledWith(
             expect.any(String),
             'chore: cleanup',
-            expect.stringContaining('Removed attributes')
+            expect.stringContaining('Removed attributes:')
         );
     });
 

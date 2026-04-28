@@ -140,3 +140,21 @@ export const commitMessagePrompt = (suggestedMsg) => ([{
     message: 'Commit message:',
     default: suggestedMsg
 }]);
+
+/**
+ * Ask the user how to continue after a debug batch completes.
+ * @param {number} processed - Number of preferences processed so far
+ * @param {number} remaining - Number of preferences remaining
+ * @returns {Object[]} Inquirer prompt config — answer key: `debugAction`
+ */
+export const debugBatchContinuePrompt = (processed, remaining) => ([{
+    name: 'debugAction',
+    type: 'list',
+    message: `Batch done (${processed} processed, ${remaining} remaining). How to continue?`,
+    choices: [
+        { name: `Next batch (up to ${Math.min(remaining, 10)} preferences)`, value: 'next' },
+        { name: `Run all remaining (${remaining} preferences)`, value: 'all' },
+        { name: 'Stop here', value: 'stop' }
+    ],
+    default: 'next'
+}]);

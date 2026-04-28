@@ -14,12 +14,13 @@
 
 import fs from 'fs';
 import path from 'path';
-import { LOG_PREFIX } from '../../../config/constants.js';
+import { LOG_PREFIX, IDENTIFIERS, FILE_PATTERNS } from '../../../config/constants.js';
 import { logError } from '../../../scripts/loggingScript/log.js';
 import {
     getSandboxConfig,
     getCoreSiteTemplatePath
 } from '../../../config/helpers/helpers.js';
+import { getResultsPath } from '../../../io/util.js';
 import {
     findLatestMetadataFile,
     parseSitePreferencesFromMetadata
@@ -29,6 +30,35 @@ import {
  * Regex to detect a SitePreferences type-extension block inside XML content.
  */
 const SITE_PREF_TYPE_EXTENSION = /type-id=["']SitePreferences["']/i;
+
+/**
+ * Extract the `<type-extension type-id="SitePreferences">...</type-extension>` block
+ * from a multi-type-extension XML file.  Returns the full SitePreferences section
+ * (including its opening and closing tags), or null if the file doesn't contain one.
+ *
+ * This prevents extraction helpers (extractAttributeDefinition, extractContainingGroup)
+ * from matching definitions or group-assignments in non-SitePreferences sections
+ * (e.g., Product, Order, OrganizationPreferences) which share the same file.
+ *
+ * @param {string} xmlContent - Raw XML string (potentially multi-type-extension)
+ * @returns {string|null} The SitePreferences type-extension block, or null
+ */
+export function extractSitePreferencesBlock(xmlContent) {
+    const startPattern = /<type-extension\s+type-id=["']SitePreferences["'][^>]*>/i;
+    const startMatch = xmlContent.match(startPattern);
+    if (!startMatch) {
+        return null;
+    }
+
+    const startIdx = startMatch.index;
+    const rest = xmlContent.slice(startIdx);
+    const endIdx = rest.indexOf('</type-extension>');
+    if (endIdx === -1) {
+        return null;
+    }
+
+    return rest.slice(0, endIdx + '</type-extension>'.length);
+}
 
 // ============================================================================
 // XML STRING MANIPULATION
@@ -206,9 +236,8 @@ function reindentBlock(block, indent) {
  *
  * @param {string} metaDir - Absolute path to a meta/ directory
  * @returns {string[]} Array of absolute file paths
- * @private
  */
-function listSitePrefMetaFiles(metaDir) {
+export function listSitePrefMetaFiles(metaDir) {
     if (!fs.existsSync(metaDir)) {
         return [];
     }
@@ -239,6 +268,37 @@ function findFilesContainingAttribute(metaDir, attributeId) {
         const content = fs.readFileSync(filePath, 'utf-8');
         const idPattern = new RegExp(`attribute-id="${escapeRegex(attributeId)}"`, 'i');
         if (idPattern.test(content)) {
+            matches.push(filePath);
+        }
+    }
+
+    return matches;
+}
+
+/**
+ * Find which meta file(s) in a directory contain the attribute-definition
+ * for a given attribute ID. Unlike findFilesContainingAttribute, this only
+ * matches files with the actual definition block, not group-assignment-only refs.
+ *
+ * @param {string} metaDir - Absolute path to meta/ directory
+ * @param {string} attributeId - Bare attribute ID (no c_ prefix)
+ * @returns {string[]} Array of file paths that contain the definition
+ * @private
+ */
+function findFilesContainingDefinition(metaDir, attributeId) {
+    const files = listSitePrefMetaFiles(metaDir);
+    const matches = [];
+
+    for (const filePath of files) {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        // Scope to the SitePreferences type-extension so we don't match
+        // definitions from other type-extensions (e.g., Product, Order)
+        // that happen to share the same file.
+        const scopedContent = extractSitePreferencesBlock(content) || content;
+        const defPattern = new RegExp(
+            `<attribute-definition\\s+attribute-id="${escapeRegex(attributeId)}"`, 'i'
+        );
+        if (defPattern.test(scopedContent)) {
             matches.push(filePath);
         }
     }
@@ -367,6 +427,71 @@ export function getRealmMetaDir(repoPath, siteTemplatesPath) {
  */
 export function getCoreMetaDir(repoPath) {
     return path.join(repoPath, getCoreSiteTemplatePath(), 'meta');
+}
+
+// ============================================================================
+// META-CLEANUP-LOGIC FILE INTEGRATION
+// ============================================================================
+
+/**
+ * Load the Meta-cleanup-logic.json file for a given instance type.
+ * Returns null if the file does not exist.
+ *
+ * @param {string} instanceType - Instance type (e.g., 'development')
+ * @returns {{ generated: string, instanceType: string, realms: string[], totalEntries: number,
+ *   mismatchCount: number, excludedPaths: string[],
+ *   entries: Array<{ preferenceId: string, pLevel: string, realmPLevels: Object,
+ *     p1Realms: string[], migrateToRealms: string[], hasMismatch: boolean }> }|null}
+ */
+export function loadMetaCleanupLogic(instanceType) {
+    const resultsDir = getResultsPath(IDENTIFIERS.ALL_REALMS, instanceType);
+    const jsonPath = path.join(resultsDir, FILE_PATTERNS.META_CLEANUP_LOGIC_JSON);
+
+    if (!fs.existsSync(jsonPath)) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    } catch (error) {
+        console.log(
+            `${LOG_PREFIX.WARNING} Failed to parse Meta-cleanup-logic.json: ${error.message}`
+        );
+        return null;
+    }
+}
+
+/**
+ * Update the excludedPaths array in Meta-cleanup-logic.json after migration.
+ * Appends new paths (deduplicates) and writes back.
+ *
+ * @param {string} instanceType - Instance type
+ * @param {string[]} newPaths - Paths to add to excludedPaths
+ */
+export function updateMetaCleanupLogicExcludedPaths(instanceType, newPaths) {
+    const resultsDir = getResultsPath(IDENTIFIERS.ALL_REALMS, instanceType);
+    const jsonPath = path.join(resultsDir, FILE_PATTERNS.META_CLEANUP_LOGIC_JSON);
+
+    if (!fs.existsSync(jsonPath)) {
+        return;
+    }
+
+    try {
+        const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+        const existing = new Set(data.excludedPaths || []);
+
+        for (const p of newPaths) {
+            existing.add(p);
+        }
+
+        data.excludedPaths = [...existing];
+        fs.writeFileSync(jsonPath, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (error) {
+        console.log(
+            `${LOG_PREFIX.WARNING} Failed to update Meta-cleanup-logic.json excludedPaths: `
+            + error.message
+        );
+    }
 }
 
 // ============================================================================
@@ -520,11 +645,16 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
             }
         } else if (remainingRealms.length >= 1) {
             // Deleted from some realms but not all → move from core to remaining realm folders.
+            // Only use core files that contain the actual attribute-definition (not just
+            // a group assignment). Files with only a group assignment ref would produce
+            // realm files without definitions — an invalid state.
+            const coreDefinitionFiles = findFilesContainingDefinition(coreMetaDir, bareId);
             // Deduplicate by physical directory so we don't create the same file twice
             // when multiple remaining realms share a directory.
             const copiedDirs = new Set();
 
-            for (const coreFilePath of coreFiles) {
+            // Phase A: Create realm files from core files that have the definition
+            for (const coreFilePath of coreDefinitionFiles) {
                 const coreFileName = path.basename(coreFilePath);
 
                 for (const remainingRealm of remainingRealms) {
@@ -577,8 +707,10 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
                     }
                     // If realm already has the attribute, no action needed
                 }
+            }
 
-                // Remove from core after ensuring remaining realms have it
+            // Phase B: Remove from ALL core files (definitions + group assignments)
+            for (const coreFilePath of coreFiles) {
                 actions.push({
                     type: 'remove',
                     attributeId: bareId,
@@ -603,6 +735,8 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
  * @param {MetaCleanupPlan} plan - The plan built by buildMetaCleanupPlan
  * @param {Object} [options] - Execution options
  * @param {boolean} [options.dryRun=false] - If true, only log what would happen
+ * @param {string[]} [options.excludedPaths=[]] - Paths protected from removal (populated by
+ *   Meta-cleanup-logic.json after previous migration runs)
  * @returns {{
  *   filesModified: string[],
  *   filesDeleted: string[],
@@ -610,7 +744,8 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
  *   errors: Array<{action: MetaCleanupAction, error: Error}>
  * }}
  */
-export function executeMetaCleanupPlan(plan, { dryRun = false } = {}) {
+export function executeMetaCleanupPlan(plan, { dryRun = false, excludedPaths = [] } = {}) {
+    const excludedSet = new Set(excludedPaths.map(p => path.resolve(p)));
     const filesModified = new Set();
     const filesDeleted = new Set();
     const filesCreated = new Set();
@@ -652,6 +787,15 @@ export function executeMetaCleanupPlan(plan, { dryRun = false } = {}) {
 
     for (const [filePath, fileActions] of removesByFile) {
         try {
+            // Skip files that are protected by excludedPaths (migrated in a previous run)
+            if (excludedSet.has(path.resolve(filePath))) {
+                console.log(
+                    `${prefix}${LOG_PREFIX.WARNING} SKIP: ${path.basename(filePath)}`
+                    + ' — protected by Meta-cleanup-logic excludedPaths'
+                );
+                continue;
+            }
+
             if (!fs.existsSync(filePath)) {
                 console.log(
                     `${prefix}${LOG_PREFIX.WARNING} SKIP: ${path.basename(filePath)} — file not found`
@@ -740,7 +884,11 @@ function createRealmMetaFile(coreFilePath, targetFilePath, attributeId) {
         fs.mkdirSync(targetDir, { recursive: true });
     }
 
-    const coreContent = fs.readFileSync(coreFilePath, 'utf-8');
+    const rawContent = fs.readFileSync(coreFilePath, 'utf-8');
+    // Scope to the SitePreferences type-extension so extraction helpers
+    // don't match definitions or groups from other type-extensions
+    // (e.g., Product, Order) that share the same file.
+    const coreContent = extractSitePreferencesBlock(rawContent) || rawContent;
 
     if (fs.existsSync(targetFilePath)) {
         // Target file already exists — append the attribute definition and group assignment
@@ -752,6 +900,11 @@ function createRealmMetaFile(coreFilePath, targetFilePath, attributeId) {
     const extractedDef = extractAttributeDefinition(coreContent, attributeId);
     const extractedGrp = extractGroupAssignment(coreContent, attributeId);
     const groupBlock = extractContainingGroup(coreContent, attributeId);
+
+    if (!extractedDef && !groupBlock && !extractedGrp) {
+        // Attribute not in the SitePreferences section — skip file creation
+        return;
+    }
 
     // Build a minimal meta file
     let newContent = '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -1164,12 +1317,15 @@ export function formatPreferenceValueResults(results) {
 
     lines.push(`  Files modified: ${results.filesModified.length}`);
     lines.push(`  Total preference values removed: ${results.totalRemoved}`);
-    lines.push('');
 
-    for (const { file, removed } of results.details) {
-        lines.push(`    ${file}`);
-        for (const id of removed) {
-            lines.push(`      - ${id}`);
+    // Show compact summary for large results, full details for small ones
+    if (results.details.length <= 5) {
+        lines.push('');
+        for (const { file, removed } of results.details) {
+            lines.push(`    ${file}`);
+            for (const id of removed) {
+                lines.push(`      - ${id}`);
+            }
         }
     }
 

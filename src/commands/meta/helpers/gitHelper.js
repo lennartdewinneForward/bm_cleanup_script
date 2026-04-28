@@ -75,6 +75,45 @@ export function getStatusSummary(repoPath) {
     }).trim();
 }
 
+/**
+ * Get lists of changed files in the working tree, grouped by change type.
+ * Includes both staged and unstaged changes.
+ *
+ * @param {string} repoPath - Absolute path to the git repository
+ * @returns {{ added: string[], modified: string[], deleted: string[] }} File paths relative to repoPath
+ */
+export function getChangedFiles(repoPath) {
+    const raw = execSync('git status --porcelain', {
+        cwd: repoPath,
+        encoding: 'utf-8'
+    }).trim();
+
+    const added = [];
+    const modified = [];
+    const deleted = [];
+
+    for (const line of raw.split('\n')) {
+        if (!line.trim()) {
+            continue;
+        }
+        // Porcelain format: XY filename (X = staging, Y = working tree)
+        const status = line.slice(0, 2);
+        const filePath = line.slice(3).trim();
+        const x = status[0];
+        const y = status[1];
+
+        if (x === '?' || x === 'A' || y === 'A') {
+            added.push(filePath);
+        } else if (x === 'D' || y === 'D') {
+            deleted.push(filePath);
+        } else if (x === 'M' || y === 'M') {
+            modified.push(filePath);
+        }
+    }
+
+    return { added, modified, deleted };
+}
+
 // ============================================================================
 // GIT MUTATIONS
 // ============================================================================

@@ -1633,6 +1633,23 @@ export function generatePreferenceDeletionCandidates(instanceTypeOverride = null
         } else {
             console.log('✓ No cross-realm intersection candidates found');
         }
+
+        // Generate Meta-cleanup-logic files (.txt + .json)
+        // Compares P-levels across realms and records mismatches for the
+        // meta-cleanup command to handle migration before removal.
+        const metaCleanupResult = generateMetaCleanupLogicFiles({
+            perRealmTiers,
+            allRealms,
+            instanceTypeOverride,
+            resultsDir
+        });
+        if (metaCleanupResult) {
+            console.log(
+                '\u2713 Generated Meta-cleanup-logic files: '
+                + `${metaCleanupResult.totalEntries} entries`
+                + ` (${metaCleanupResult.mismatchCount} with cross-realm mismatches)`
+            );
+        }
     }
 
     return outputFilePath;
@@ -2383,6 +2400,194 @@ function writeCrossRealmIntersectionFile({
 
     fs.writeFileSync(outputFilePath, lines.join('\n'), 'utf-8');
     return outputFilePath;
+}
+
+/**
+ * Generate Meta-cleanup-logic files (.txt and .json).
+ * Compares per-realm P-levels for every deletion candidate and identifies
+ * preferences where P-levels differ across realms (mismatches). The JSON
+ * file is consumed by the meta-cleanup command to drive migration logic
+ * before removing attribute definitions from shared meta XMLs.
+ *
+ * @param {Object} params
+ * @param {Map<string, {p1: Array, p2: Array, p3: Array, p4: Array, p5: Array}>} params.perRealmTiers
+ * @param {string[]} params.allRealms - All realm names
+ * @param {string|null} params.instanceTypeOverride - Instance type
+ * @param {string} params.resultsDir - ALL_REALMS results directory
+ * @returns {{ totalEntries: number, mismatchCount: number }|null}
+ */
+function generateMetaCleanupLogicFiles({
+    perRealmTiers,
+    allRealms,
+    instanceTypeOverride,
+    resultsDir
+}) {
+    const realmsWithData = allRealms.filter(r => perRealmTiers.has(r));
+    if (realmsWithData.length < 2) {
+        return null;
+    }
+
+    // Build a map: prefId → Map<realm, tierString>
+    const prefRealmTierMap = new Map();
+
+    for (const realm of realmsWithData) {
+        const tiers = perRealmTiers.get(realm);
+        if (!tiers) {
+            continue;
+        }
+
+        const tierArrays = [
+            { tier: 'P1', candidates: tiers.p1 },
+            { tier: 'P2', candidates: tiers.p2 },
+            { tier: 'P3', candidates: tiers.p3 },
+            { tier: 'P4', candidates: tiers.p4 },
+            { tier: 'P5', candidates: tiers.p5 }
+        ];
+
+        for (const { tier, candidates } of tierArrays) {
+            for (const c of candidates) {
+                if (!prefRealmTierMap.has(c.id)) {
+                    prefRealmTierMap.set(c.id, new Map());
+                }
+                prefRealmTierMap.get(c.id).set(realm, tier);
+            }
+        }
+    }
+
+    if (prefRealmTierMap.size === 0) {
+        return null;
+    }
+
+    // Build entries for JSON and TXT output
+    const jsonEntries = [];
+
+    for (const [prefId, realmTiers] of prefRealmTierMap) {
+        // Determine the lowest (most deletable) P-level across all realms
+        // where this preference is a candidate
+        const tierValues = [...realmTiers.values()];
+        const uniqueTiers = [...new Set(tierValues)];
+
+        // Realms where this preference IS a deletion candidate
+        const candidateRealms = [...realmTiers.keys()];
+
+        // Realms where this preference is NOT a candidate at all
+        const nonCandidateRealms = realmsWithData.filter(
+            r => !realmTiers.has(r)
+        );
+
+        // Determine if there is a mismatch:
+        // 1. Different P-levels across realms that have this preference
+        // 2. Some realms have this preference as a candidate, others don't
+        const hasTierMismatch = uniqueTiers.length > 1;
+        const hasMismatch = hasTierMismatch || nonCandidateRealms.length > 0;
+
+        // The primary P-level is the lowest (safest) tier among candidate realms
+        const lowestTier = uniqueTiers.sort()[0];
+
+        // P1 realms: realms where this preference is classified as P1
+        const p1Realms = candidateRealms.filter(r => realmTiers.get(r) === 'P1');
+
+        // Migrate-to realms: realms where this preference is NOT a P1 candidate
+        // (either higher tier or not a candidate at all).
+        // These realms need the preference migrated to their private meta XML
+        // when removing it from the shared meta XML.
+        const migrateToRealms = [
+            ...candidateRealms.filter(r => realmTiers.get(r) !== 'P1'),
+            ...nonCandidateRealms
+        ];
+
+        // Build per-realm P-level detail for the JSON entry
+        const realmPLevels = {};
+        for (const [realm, tier] of realmTiers) {
+            realmPLevels[realm] = tier;
+        }
+        for (const realm of nonCandidateRealms) {
+            realmPLevels[realm] = null;
+        }
+
+        jsonEntries.push({
+            preferenceId: prefId,
+            pLevel: lowestTier,
+            realmPLevels,
+            p1Realms,
+            migrateToRealms,
+            hasMismatch
+        });
+    }
+
+    // Sort alphabetically by preferenceId
+    jsonEntries.sort((a, b) => a.preferenceId.localeCompare(b.preferenceId));
+
+    // --- Write JSON file ---
+    const jsonOutput = {
+        generated: new Date().toISOString(),
+        instanceType: instanceTypeOverride || 'ALL',
+        realms: realmsWithData,
+        totalEntries: jsonEntries.length,
+        mismatchCount: jsonEntries.filter(e => e.hasMismatch).length,
+        excludedPaths: [],
+        entries: jsonEntries
+    };
+
+    const jsonFilePath = path.join(resultsDir, FILE_PATTERNS.META_CLEANUP_LOGIC_JSON);
+    fs.writeFileSync(jsonFilePath, JSON.stringify(jsonOutput, null, 2), 'utf-8');
+
+    // --- Write TXT file ---
+    const txtLines = [
+        '# Meta-cleanup-logic Notation',
+        '# Each entry lists a preference, its P-level, and the realms where that P-level applies.',
+        '# Realms in brackets [ ] indicate where the preference should be migrated/copied to a private meta XML.',
+        '# Example: BePay: P1(PNA, APAC, GB) [P2(EU)] means BePay is P1 in PNA, APAC, GB'
+            + ' and must be migrated to EU\'s private meta XML (where it is P2).',
+        '# Multiple migrate-to realms with different P-levels: BePay: P1(PNA, GB) [P2(EU), P3(APAC)]',
+        '# A migrate-to realm with no P-level (not a deletion candidate): BePay: P1(PNA) [none(EU)]',
+        '#',
+        `# Generated: ${jsonOutput.generated}`,
+        `# Instance Type: ${jsonOutput.instanceType}`,
+        `# Realms: ${realmsWithData.join(', ')}`,
+        `# Total entries: ${jsonOutput.totalEntries}`,
+        `# Entries with cross-realm mismatches: ${jsonOutput.mismatchCount}`,
+        ''
+    ];
+
+    for (const entry of jsonEntries) {
+        const p1Label = entry.p1Realms.length > 0
+            ? entry.p1Realms.join(', ')
+            : 'none';
+
+        if (entry.migrateToRealms.length > 0) {
+            // Group migrate-to realms by their P-level for the notation
+            const byPLevel = new Map();
+            for (const realm of entry.migrateToRealms) {
+                const realmTier = entry.realmPLevels[realm] || 'none';
+                if (!byPLevel.has(realmTier)) {
+                    byPLevel.set(realmTier, []);
+                }
+                byPLevel.get(realmTier).push(realm);
+            }
+
+            const migrateLabel = [...byPLevel.entries()]
+                .map(([tier, realms]) => `${tier}(${realms.join(', ')})`)
+                .join(', ');
+
+            txtLines.push(
+                `${entry.preferenceId}: ${entry.pLevel}(${p1Label})`
+                + ` [${migrateLabel}]`
+            );
+        } else {
+            txtLines.push(
+                `${entry.preferenceId}: ${entry.pLevel}(${p1Label})`
+            );
+        }
+    }
+
+    const txtFilePath = path.join(resultsDir, FILE_PATTERNS.META_CLEANUP_LOGIC_TXT);
+    fs.writeFileSync(txtFilePath, txtLines.join('\n'), 'utf-8');
+
+    return {
+        totalEntries: jsonEntries.length,
+        mismatchCount: jsonEntries.filter(e => e.hasMismatch).length
+    };
 }
 
 /**

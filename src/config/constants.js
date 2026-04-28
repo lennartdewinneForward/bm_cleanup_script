@@ -106,6 +106,8 @@ export const FILE_PATTERNS = {
     PREFERENCE_USAGE: '_preference_usage.txt',
     USED_PREFERENCES: '_used_preferences.txt',
     CARTRIDGE_COMPARISON: '_cartridge_comparison.txt',
+    META_CLEANUP_LOGIC_TXT: 'Meta-cleanup-logic.txt',
+    META_CLEANUP_LOGIC_JSON: 'Meta-cleanup-logic.json',
     SITE_CARTRIDGES_LIST: '_active_site_cartridges_list.csv',
     SITE_PREFERENCES_CSV: '_site_preferences.csv',
     SITE_XML_VALIDATION: '_site_xml_validation.txt',

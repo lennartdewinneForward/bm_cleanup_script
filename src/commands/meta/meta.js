@@ -1,5 +1,6 @@
 import { metaCleanup } from './actions/metaCleanup.js';
 import { detectOrphans } from './actions/orphanDetection.js';
+import { validateMetaChangesAction } from './actions/validateMetaChanges.js';
 
 // ============================================================================
 // META COMMANDS REGISTRATION
@@ -15,7 +16,13 @@ export function registerMetaCommands(program) {
     program
         .command('meta-cleanup')
         .description('Full meta cleanup workflow — create branch, remove preference definitions, stage & commit')
+        .option('--debug [count]', 'Process preferences in batches (default: 10) — pause between batches for verification')
         .action(metaCleanup);
+
+    program
+        .command('validate-meta-changes')
+        .description('Verify meta-cleanup results — check removals against deletion files, blacklist, and file structure')
+        .action(validateMetaChangesAction);
 
     program
         .command('detect-orphans')
