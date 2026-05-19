@@ -43,7 +43,8 @@ vi.mock('../../../src/commands/meta/helpers/metaFileCleanup.js', () => ({
     formatPreferenceValueResults: vi.fn(() => '  Pref value results'),
     stripCustomPrefix: vi.fn(id => id.startsWith('c_') ? id.slice(2) : id),
     loadMetaCleanupLogic: vi.fn(() => null),
-    updateMetaCleanupLogicExcludedPaths: vi.fn()
+    updateMetaCleanupLogicExcludedPaths: vi.fn(),
+    enrichRegionalGroups: vi.fn(() => ({ enriched: [], skipped: [] }))
 }));
 
 vi.mock('../../../src/commands/meta/helpers/metaConsolidation.js', () => ({
@@ -117,10 +118,12 @@ vi.mock('../../../src/commands/meta/helpers/metaChangeValidator.js', () => ({
         removedAttributes: { total: 0, approved: 0, unapproved: [] },
         blacklistViolations: [],
         createdFiles: { total: 0, valid: 0, issues: [] },
+        indentationIssues: [],
         summary: ''
     })),
     formatValidationReport: vi.fn(() => '  Validation: all checks passed'),
-    fixXmlIndentation: vi.fn(() => ({ fixed: [], skipped: [] }))
+    fixXmlIndentation: vi.fn(() => ({ fixed: [], skipped: [] })),
+    validateXmlIndentation: vi.fn(() => ({ issues: [] }))
 }));
 
 vi.mock('inquirer', () => ({
@@ -226,6 +229,7 @@ function setupDefaults() {
         removedAttributes: { total: 0, approved: 0, unapproved: [] },
         blacklistViolations: [],
         createdFiles: { total: 0, valid: 0, issues: [] },
+        indentationIssues: [],
         summary: ''
     });
     formatValidationReport.mockReturnValue('  Validation: all checks passed');

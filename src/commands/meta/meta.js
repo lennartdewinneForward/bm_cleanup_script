@@ -22,6 +22,7 @@ export function registerMetaCommands(program) {
     program
         .command('validate-meta-changes')
         .description('Verify meta-cleanup results — check removals against deletion files, blacklist, and file structure')
+        .option('--fix', 'Auto-fix indentation issues in changed XML files')
         .action(validateMetaChangesAction);
 
     program

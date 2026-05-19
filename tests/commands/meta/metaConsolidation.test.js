@@ -757,4 +757,40 @@ describe('mergeMetaFiles', () => {
         expect(result.regionOutputs.size).toBe(1);
         expect(result.regionOutputs.get('EU05').attributeCount).toBe(2);
     });
+
+    it('regional group definitions include core attribute assignments', () => {
+        const eu05 = parseSample('EU05', ['sharedA', 'sharedB', 'uniqueEU']);
+        const apac = parseSample('APAC', ['sharedA', 'sharedB', 'uniqueAPAC']);
+
+        const result = mergeMetaFiles({ parsedFiles: [eu05, apac], coreThreshold: 2 });
+
+        const eu05Xml = result.regionOutputs.get('EU05').xml;
+        const apacXml = result.regionOutputs.get('APAC').xml;
+
+        // Regional files only define unique attributes (no core definitions)
+        expect(eu05Xml).toContain('attribute-definition attribute-id="uniqueEU"');
+        expect(eu05Xml).not.toContain('attribute-definition attribute-id="sharedA"');
+        expect(eu05Xml).not.toContain('attribute-definition attribute-id="sharedB"');
+
+        // But group assignments include ALL attributes (core + unique)
+        // so the replace import does not strip core attributes from the group
+        expect(eu05Xml).toContain('<attribute attribute-id="sharedA"/>');
+        expect(eu05Xml).toContain('<attribute attribute-id="sharedB"/>');
+        expect(eu05Xml).toContain('<attribute attribute-id="uniqueEU"/>');
+
+        expect(apacXml).toContain('<attribute attribute-id="sharedA"/>');
+        expect(apacXml).toContain('<attribute attribute-id="sharedB"/>');
+        expect(apacXml).toContain('<attribute attribute-id="uniqueAPAC"/>');
+    });
+
+    it('regional groupPairCount includes core + unique pairs', () => {
+        const eu05 = parseSample('EU05', ['sharedA', 'sharedB', 'uniqueEU']);
+        const apac = parseSample('APAC', ['sharedA', 'sharedB', 'uniqueAPAC']);
+
+        const result = mergeMetaFiles({ parsedFiles: [eu05, apac], coreThreshold: 2 });
+
+        // Each region has 3 group pairs (2 core + 1 unique) in one group
+        expect(result.regionOutputs.get('EU05').groupPairCount).toBe(3);
+        expect(result.regionOutputs.get('APAC').groupPairCount).toBe(3);
+    });
 });

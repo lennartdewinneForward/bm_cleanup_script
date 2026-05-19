@@ -331,22 +331,37 @@ export function mergeMetaFiles({ parsedFiles, coreThreshold = DEFAULT_CORE_THRES
             }
         }
 
-        const uniqueGroupPairs = new Set();
+        // Identify groups that will appear in the regional file (have at least one unique attr)
+        const regionalGroupIds = new Set();
         for (const [groupId, groupData] of entry.groups.entries()) {
             for (const attributeId of groupData.attributeIds) {
                 if (uniqueAttributeIds.has(attributeId)) {
-                    uniqueGroupPairs.add(`${groupId}|||${attributeId}`);
+                    regionalGroupIds.add(groupId);
+                    break;
                 }
+            }
+        }
+
+        // For groups in the regional file, include ALL attribute assignments (core + unique)
+        // so the replace import does not strip core attributes from those groups.
+        const regionalGroupPairs = new Set();
+        for (const groupId of regionalGroupIds) {
+            const groupData = entry.groups.get(groupId);
+            for (const attributeId of groupData.attributeIds) {
+                regionalGroupPairs.add(`${groupId}|||${attributeId}`);
             }
         }
 
         if (uniqueAttributeIds.size > 0) {
             regionOutputs.set(entry.realm, {
-                xml: buildOutputXml([entry], uniqueAttributeIds, uniqueGroupPairs),
+                xml: buildOutputXml([entry], uniqueAttributeIds, regionalGroupPairs),
                 attributeCount: uniqueAttributeIds.size,
-                groupPairCount: uniqueGroupPairs.size
+                groupPairCount: regionalGroupPairs.size
             });
         }
+        // TODO: If a realm has 0 unique attributes, it currently gets no regional file.
+        // A future ticket should ensure every realm always gets a regional file during
+        // consolidation so the replace import always has a complete group definition set.
     }
 
     return {

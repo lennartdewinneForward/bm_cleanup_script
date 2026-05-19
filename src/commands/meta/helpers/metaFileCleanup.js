@@ -1371,3 +1371,232 @@ export function formatSitesScanResults(results) {
     lines.push('═'.repeat(80));
     return lines.join('\n');
 }
+
+// ============================================================================
+// REGIONAL GROUP ENRICHMENT
+// ============================================================================
+
+/**
+ * Parse all group → attribute-id assignments from a SitePreferences XML block.
+ *
+ * @param {string} xmlContent - XML content containing group-definitions
+ * @returns {Map<string, Set<string>>} Map of groupId → Set of attribute IDs
+ * @private
+ */
+function parseGroupAttributeAssignments(xmlContent) {
+    const groups = new Map();
+    const groupPattern = /<attribute-group\b[^>]*group-id="([^"]+)"[^>]*>[\s\S]*?<\/attribute-group>/g;
+    let groupMatch;
+
+    while ((groupMatch = groupPattern.exec(xmlContent)) !== null) {
+        const groupId = groupMatch[1];
+        const groupBlock = groupMatch[0];
+        const attrPattern = /<attribute\s+attribute-id="([^"]+)"\s*\/>/g;
+        const attrIds = new Set();
+        let attrMatch;
+
+        while ((attrMatch = attrPattern.exec(groupBlock)) !== null) {
+            attrIds.add(attrMatch[1]);
+        }
+
+        if (!groups.has(groupId)) {
+            groups.set(groupId, attrIds);
+        } else {
+            // Merge if same group appears in multiple files
+            for (const id of attrIds) {
+                groups.get(groupId).add(id);
+            }
+        }
+    }
+
+    return groups;
+}
+
+/**
+ * Add missing core attribute references to group definitions in a regional XML file.
+ * Only modifies groups that already exist in the regional file — does not create new groups.
+ *
+ * @param {string} regionalContent - The regional meta file content
+ * @param {Map<string, Set<string>>} coreGroupAssignments - Core group → attribute IDs
+ * @returns {{ content: string, addedCount: number }} Updated content and count of added references
+ * @private
+ */
+function addCoreAttributesToRegionalGroups(regionalContent, coreGroupAssignments) {
+    let content = regionalContent;
+    let addedCount = 0;
+
+    const groupPattern = /<attribute-group\b[^>]*group-id="([^"]+)"[^>]*>[\s\S]*?<\/attribute-group>/g;
+    let groupMatch;
+
+    // Collect replacements (process in reverse order to preserve offsets)
+    const replacements = [];
+
+    while ((groupMatch = groupPattern.exec(content)) !== null) {
+        const groupId = groupMatch[1];
+        const coreAttrs = coreGroupAssignments.get(groupId);
+
+        if (!coreAttrs || coreAttrs.size === 0) {
+            continue;
+        }
+
+        const groupBlock = groupMatch[0];
+        const existingAttrPattern = /<attribute\s+attribute-id="([^"]+)"\s*\/>/g;
+        const existingIds = new Set();
+        let existingMatch;
+
+        while ((existingMatch = existingAttrPattern.exec(groupBlock)) !== null) {
+            existingIds.add(existingMatch[1]);
+        }
+
+        // Find core attrs missing from this regional group
+        const missingAttrs = [...coreAttrs].filter(id => !existingIds.has(id)).sort();
+
+        if (missingAttrs.length === 0) {
+            continue;
+        }
+
+        // Detect indentation from existing attribute lines
+        const indentMatch = groupBlock.match(/^([ \t]*)<attribute\s/m);
+        const attrIndent = indentMatch ? indentMatch[1] : '                ';
+
+        // Build insertion text
+        const insertLines = missingAttrs
+            .map(id => `${attrIndent}<attribute attribute-id="${id}"/>`)
+            .join('\n');
+
+        // Insert before </attribute-group>, preserving the closing tag's indentation.
+        // Derive indentation from the opening tag's position in the full content
+        // (opening and closing tags always share the same indent level).
+        const lineStartIdx = content.lastIndexOf('\n', groupMatch.index);
+        const openingIndent = lineStartIdx >= 0
+            ? content.slice(lineStartIdx + 1, groupMatch.index)
+            : content.slice(0, groupMatch.index);
+
+        const closingIdx = groupBlock.lastIndexOf('</attribute-group>');
+        const beforeClosing = groupBlock.slice(0, closingIdx);
+        const lastNewline = beforeClosing.lastIndexOf('\n');
+        const contentBeforeIndent = lastNewline >= 0
+            ? beforeClosing.slice(0, lastNewline + 1)
+            : beforeClosing;
+
+        const updatedGroup = contentBeforeIndent
+            + insertLines + '\n'
+            + openingIndent
+            + groupBlock.slice(closingIdx);
+
+        replacements.push({
+            start: groupMatch.index,
+            end: groupMatch.index + groupBlock.length,
+            replacement: updatedGroup
+        });
+
+        addedCount += missingAttrs.length;
+    }
+
+    // Apply replacements in reverse order
+    for (let i = replacements.length - 1; i >= 0; i--) {
+        const { start, end, replacement } = replacements[i];
+        content = content.slice(0, start) + replacement + content.slice(end);
+    }
+
+    return { content, addedCount };
+}
+
+/**
+ * Enrich regional meta files with core group attribute assignments.
+ *
+ * For each realm's meta directory, reads the core meta files to collect all
+ * group → attribute-id mappings. Then for each regional file (non-core), ensures
+ * that groups defined in the regional file include all attribute references from
+ * the same group in core. This prevents the regional `replace` import from
+ * stripping core attributes out of shared groups.
+ *
+ * @param {Object} options
+ * @param {string} options.repoPath - Absolute path to the sibling repository
+ * @param {string[]} options.realmList - Realm names to process
+ * @returns {{ enriched: Array<{realm: string, file: string, added: number}>, skipped: string[] }}
+ */
+export function enrichRegionalGroups({ repoPath, realmList }) {
+    const coreMetaDir = getCoreMetaDir(repoPath);
+    const enriched = [];
+    const skipped = [];
+
+    // Parse core group assignments from all core meta files
+    const coreGroupAssignments = new Map();
+    const coreFiles = listSitePrefMetaFiles(coreMetaDir);
+
+    for (const coreFile of coreFiles) {
+        const content = fs.readFileSync(coreFile, 'utf-8');
+        const spBlock = extractSitePreferencesBlock(content);
+
+        if (!spBlock) {
+            continue;
+        }
+
+        const fileGroups = parseGroupAttributeAssignments(spBlock);
+        for (const [groupId, attrIds] of fileGroups) {
+            if (!coreGroupAssignments.has(groupId)) {
+                coreGroupAssignments.set(groupId, new Set());
+            }
+            for (const id of attrIds) {
+                coreGroupAssignments.get(groupId).add(id);
+            }
+        }
+    }
+
+    if (coreGroupAssignments.size === 0) {
+        return { enriched, skipped: realmList.slice() };
+    }
+
+    // Process each realm's meta directory
+    const processedDirs = new Set();
+
+    for (const realm of realmList) {
+        const config = getSandboxConfig(realm);
+
+        if (!config) {
+            skipped.push(realm);
+            continue;
+        }
+
+        const realmMetaDir = getRealmMetaDir(repoPath, config.siteTemplatesPath);
+
+        // Skip if we already processed this physical directory (shared dirs)
+        if (processedDirs.has(realmMetaDir)) {
+            continue;
+        }
+        processedDirs.add(realmMetaDir);
+
+        // Skip if realm meta dir is the same as core dir
+        if (path.resolve(realmMetaDir) === path.resolve(coreMetaDir)) {
+            continue;
+        }
+
+        const realmFiles = listSitePrefMetaFiles(realmMetaDir);
+
+        for (const filePath of realmFiles) {
+            const fileName = path.basename(filePath);
+
+            // Skip core files in the realm directory (they are the global ones)
+            if (fileName === 'meta.core.xml') {
+                continue;
+            }
+
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const { content: updatedContent, addedCount } = addCoreAttributesToRegionalGroups(
+                content, coreGroupAssignments
+            );
+
+            if (addedCount > 0) {
+                fs.writeFileSync(filePath, updatedContent, 'utf-8');
+                enriched.push({ realm, file: fileName, added: addedCount });
+                console.log(
+                    `  ${LOG_PREFIX.INFO} ENRICH: ${fileName} [${realm}]`
+                    + ` — added ${addedCount} core group ref(s)`
+                );
+            }
+        }
+    }
+
+    return { enriched, skipped };
+}

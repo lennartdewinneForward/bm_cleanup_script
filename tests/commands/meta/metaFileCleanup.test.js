@@ -31,7 +31,8 @@ import {
     scanSitesForRemainingPreferences,
     removePreferenceValuesFromSites,
     getRealmMetaDir,
-    getCoreMetaDir
+    getCoreMetaDir,
+    enrichRegionalGroups
 } from '../../../src/commands/meta/helpers/metaFileCleanup.js';
 import { getSandboxConfig } from '../../../src/config/helpers/helpers.js';
 
@@ -2341,5 +2342,191 @@ describe('End-to-end meta cleanup workflow', () => {
 
         // Core should be deleted (all attributes either removed or moved out)
         expect(fs.existsSync(path.join(coreMetaDir, 'meta.xml'))).toBe(false);
+    });
+});
+
+// ============================================================================
+// enrichRegionalGroups
+// ============================================================================
+
+describe('enrichRegionalGroups', () => {
+    let tmpDir;
+    let logSpy;
+
+    beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'enrich-'));
+        logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+        // Setup mock configs
+        getSandboxConfig.mockImplementation((realm) => {
+            if (realm === 'EU05') {
+                return { siteTemplatesPath: 'sites/site_template_eu' };
+            }
+            if (realm === 'APAC') {
+                return { siteTemplatesPath: 'sites/site_template_apac' };
+            }
+            return null;
+        });
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        logSpy.mockRestore();
+    });
+
+    function setupCoreDir(attributeIds, groupId = 'SharedGroup') {
+        const coreDir = path.join(tmpDir, 'sites', 'site_template', 'meta');
+        fs.mkdirSync(coreDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(coreDir, 'meta.core.xml'),
+            createMetaXml(attributeIds, { groupId }),
+            'utf-8'
+        );
+        return coreDir;
+    }
+
+    function setupRealmDir(realmTemplate, attributeIds, groupId = 'SharedGroup') {
+        const realmDir = path.join(tmpDir, realmTemplate, 'meta');
+        fs.mkdirSync(realmDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(realmDir, 'meta.EU05.xml'),
+            createMetaXml(attributeIds, { groupId }),
+            'utf-8'
+        );
+        return realmDir;
+    }
+
+    it('adds missing core group references to regional files', () => {
+        // Core has SharedGroup with [coreA, coreB, coreC]
+        setupCoreDir(['coreA', 'coreB', 'coreC']);
+
+        // Regional has SharedGroup with [uniqueEU] only
+        const realmDir = setupRealmDir('sites/site_template_eu', ['uniqueEU']);
+
+        const result = enrichRegionalGroups({ repoPath: tmpDir, realmList: ['EU05'] });
+
+        expect(result.enriched.length).toBe(1);
+        expect(result.enriched[0].realm).toBe('EU05');
+        expect(result.enriched[0].added).toBe(3);
+
+        const updatedContent = fs.readFileSync(
+            path.join(realmDir, 'meta.EU05.xml'), 'utf-8'
+        );
+        expect(updatedContent).toContain('<attribute attribute-id="coreA"/>');
+        expect(updatedContent).toContain('<attribute attribute-id="coreB"/>');
+        expect(updatedContent).toContain('<attribute attribute-id="coreC"/>');
+        expect(updatedContent).toContain('<attribute attribute-id="uniqueEU"/>');
+    });
+
+    it('does not duplicate existing attribute references', () => {
+        // Core has SharedGroup with [coreA, coreB]
+        setupCoreDir(['coreA', 'coreB']);
+
+        // Regional already has coreA + uniqueEU
+        const realmDir = setupRealmDir('sites/site_template_eu', ['coreA', 'uniqueEU']);
+
+        const result = enrichRegionalGroups({ repoPath: tmpDir, realmList: ['EU05'] });
+
+        expect(result.enriched.length).toBe(1);
+        expect(result.enriched[0].added).toBe(1); // Only coreB added
+
+        const updatedContent = fs.readFileSync(
+            path.join(realmDir, 'meta.EU05.xml'), 'utf-8'
+        );
+        // Count occurrences of coreA — should appear exactly once
+        const coreAMatches = updatedContent.match(/attribute-id="coreA"/g);
+        expect(coreAMatches.length).toBe(2); // 1 definition + 1 group ref
+    });
+
+    it('skips when regional file has no matching groups', () => {
+        // Core has SharedGroup with [coreA]
+        setupCoreDir(['coreA'], 'SharedGroup');
+
+        // Regional has a DIFFERENT group
+        const realmDir = setupRealmDir('sites/site_template_eu', ['uniqueEU'], 'DifferentGroup');
+
+        const result = enrichRegionalGroups({ repoPath: tmpDir, realmList: ['EU05'] });
+
+        expect(result.enriched.length).toBe(0);
+    });
+
+    it('returns empty when no core files exist', () => {
+        // No core directory
+        const coreDir = path.join(tmpDir, 'sites', 'site_template', 'meta');
+        fs.mkdirSync(coreDir, { recursive: true });
+
+        setupRealmDir('sites/site_template_eu', ['uniqueEU']);
+
+        const result = enrichRegionalGroups({ repoPath: tmpDir, realmList: ['EU05'] });
+
+        expect(result.enriched.length).toBe(0);
+    });
+
+    it('skips realms with no config', () => {
+        setupCoreDir(['coreA']);
+
+        const result = enrichRegionalGroups({ repoPath: tmpDir, realmList: ['UNKNOWN'] });
+
+        expect(result.skipped).toContain('UNKNOWN');
+        expect(result.enriched.length).toBe(0);
+    });
+
+    it('skips meta.core.xml in realm directories', () => {
+        // Core has SharedGroup with [coreA, coreB]
+        setupCoreDir(['coreA', 'coreB']);
+
+        // Realm directory also has a meta.core.xml (from consolidation) — should not be modified
+        const realmDir = path.join(tmpDir, 'sites', 'site_template_eu', 'meta');
+        fs.mkdirSync(realmDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(realmDir, 'meta.core.xml'),
+            createMetaXml(['coreA', 'coreB'], { groupId: 'SharedGroup' }),
+            'utf-8'
+        );
+        // Regional file with only uniqueEU in the same SharedGroup
+        fs.writeFileSync(
+            path.join(realmDir, 'meta.EU05.xml'),
+            createMetaXml(['uniqueEU'], { groupId: 'SharedGroup' }),
+            'utf-8'
+        );
+
+        const result = enrichRegionalGroups({ repoPath: tmpDir, realmList: ['EU05'] });
+
+        // meta.core.xml should not be modified (only meta.EU05.xml)
+        expect(result.enriched.length).toBe(1);
+        expect(result.enriched[0].file).toBe('meta.EU05.xml');
+    });
+
+    it('preserves correct indentation for added attribute references', () => {
+        // Core has SharedGroup with [coreA, coreB]
+        setupCoreDir(['coreA', 'coreB']);
+
+        // Regional has SharedGroup with [uniqueEU]
+        const realmDir = setupRealmDir('sites/site_template_eu', ['uniqueEU']);
+
+        enrichRegionalGroups({ repoPath: tmpDir, realmList: ['EU05'] });
+
+        const updatedContent = fs.readFileSync(
+            path.join(realmDir, 'meta.EU05.xml'), 'utf-8'
+        );
+
+        // All attribute refs in the group should have the same indentation
+        const attrLines = updatedContent
+            .split('\n')
+            .filter(line => line.includes('<attribute attribute-id='));
+
+        const indents = attrLines.map(line => line.match(/^(\s*)/)[1]);
+        const uniqueIndents = new Set(indents);
+
+        // All attribute lines should share the same indentation
+        expect(uniqueIndents.size).toBe(1);
+
+        // Opening and closing attribute-group tags must have matching indentation
+        const lines = updatedContent.split('\n');
+        const openLine = lines.find(l => l.includes('<attribute-group'));
+        const closeLine = lines.find(l => l.includes('</attribute-group>'));
+        const openIndent = openLine.match(/^(\s*)/)[1];
+        const closeIndent = closeLine.match(/^(\s*)/)[1];
+        expect(closeIndent).toBe(openIndent);
     });
 });

@@ -26,7 +26,8 @@ import {
     removePreferenceValuesFromSites,
     formatPreferenceValueResults,
     stripCustomPrefix,
-    loadMetaCleanupLogic
+    loadMetaCleanupLogic,
+    enrichRegionalGroups
 } from '../helpers/metaFileCleanup.js';
 import {
     validateMetaChanges,
@@ -348,7 +349,24 @@ export async function metaCleanup(options = {}) {
 
     runCrossRealmScanIfNeeded({ useCrossRealm, repoPath, selectedPreferenceIds });
 
-    // --- STEP 8b: Meta file consolidation ---
+    // --- STEP 8b: Enrich regional groups with core attribute references ---
+    console.log('\n  Enriching regional meta files with core group references...');
+    const enrichResult = enrichRegionalGroups({ repoPath, realmList });
+
+    if (enrichResult.enriched.length > 0) {
+        const totalAdded = enrichResult.enriched.reduce((sum, e) => sum + e.added, 0);
+        console.log(
+            `  ✓ Added ${totalAdded} core group ref(s) across`
+            + ` ${enrichResult.enriched.length} file(s).`
+        );
+        aggregatedResults.filesModified.push(
+            ...enrichResult.enriched.map(e => path.join(repoPath, e.file))
+        );
+    } else {
+        console.log('  ✓ All regional files already up-to-date.\n');
+    }
+
+    // --- STEP 8c: Meta file consolidation ---
     const { consolidate } = await inquirer.prompt(
         consolidateMetaPrompt()
     );
@@ -377,7 +395,7 @@ export async function metaCleanup(options = {}) {
         }
     }
 
-    // --- STEP 8c: Fix XML indentation ---
+    // --- STEP 8d: Fix XML indentation ---
     console.log('\n  Fixing XML indentation (tabs → spaces, trailing whitespace)...');
     const lintResults = fixXmlIndentation(repoPath);
     if (lintResults.fixed.length > 0) {
@@ -386,7 +404,7 @@ export async function metaCleanup(options = {}) {
         console.log(`    ${LOG_PREFIX.INFO} All XML files already clean`);
     }
 
-    // --- STEP 8d: Validate changes ---
+    // --- STEP 8e: Validate changes ---
     console.log('\n  Validating changes...');
     const validationReport = validateMetaChanges({
         repoPath, instanceType, realmPreferenceMap
@@ -395,7 +413,8 @@ export async function metaCleanup(options = {}) {
 
     const hasValidationIssues = validationReport.removedAttributes.unapproved.length > 0
         || validationReport.blacklistViolations.length > 0
-        || validationReport.createdFiles.issues.length > 0;
+        || validationReport.createdFiles.issues.length > 0
+        || validationReport.indentationIssues.length > 0;
 
     if (hasValidationIssues) {
         const { proceed } = await inquirer.prompt([{

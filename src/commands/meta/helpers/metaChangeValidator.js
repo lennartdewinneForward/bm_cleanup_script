@@ -107,15 +107,45 @@ function parseAttributeIdsFromNewFile(filePath) {
 // ============================================================================
 
 /**
+ * Collect all attribute-definition IDs from core meta files.
+ * Used to avoid false "orphaned group assignment" flags on regional files
+ * that reference attributes defined in core.
+ *
+ * @param {string} coreMetaDir - Absolute path to the core meta directory
+ * @returns {Set<string>} All attribute IDs defined in core meta files
+ */
+function collectCoreDefinitionIds(coreMetaDir) {
+    const ids = new Set();
+
+    if (!fs.existsSync(coreMetaDir)) {
+        return ids;
+    }
+
+    const xmlFiles = fs.readdirSync(coreMetaDir).filter(f => f.endsWith('.xml'));
+    const defPattern = /attribute-definition\s+attribute-id="([^"]+)"/gi;
+
+    for (const file of xmlFiles) {
+        const content = fs.readFileSync(path.join(coreMetaDir, file), 'utf-8');
+        let match;
+        while ((match = defPattern.exec(content)) !== null) {
+            ids.add(match[1]);
+        }
+    }
+
+    return ids;
+}
+
+/**
  * Check a newly created realm file for structural issues:
  * - Must contain a SitePreferences type-extension
- * - Every attribute in a group-assignment should have a definition
+ * - Every attribute in a group-assignment should have a definition (local or core)
  * - No non-SitePreferences type-extensions allowed
  *
  * @param {string} filePath - Absolute path to the file
+ * @param {Set<string>} coreDefinitionIds - Attribute IDs defined in core meta files
  * @returns {{ ok: boolean, issues: string[] }}
  */
-function validateRealmFileStructure(filePath) {
+function validateRealmFileStructure(filePath, coreDefinitionIds = new Set()) {
     const content = fs.readFileSync(filePath, 'utf-8');
     const issues = [];
 
@@ -140,8 +170,8 @@ function validateRealmFileStructure(filePath) {
         return { ok: issues.length === 0, issues };
     }
 
-    // Collect defined attribute IDs
-    const defIds = new Set();
+    // Collect defined attribute IDs (local + core)
+    const defIds = new Set(coreDefinitionIds);
     const defPattern = /attribute-definition\s+attribute-id="([^"]+)"/gi;
     let match;
     while ((match = defPattern.exec(spBlock)) !== null) {
@@ -155,7 +185,7 @@ function validateRealmFileStructure(filePath) {
         assignedIds.add(match[1]);
     }
 
-    // Check for orphaned group assignments (assigned but not defined)
+    // Check for orphaned group assignments (assigned but not defined locally or in core)
     for (const assignedId of assignedIds) {
         if (!defIds.has(assignedId)) {
             issues.push(`Orphaned group assignment: ${assignedId} (no definition)`);
@@ -203,11 +233,16 @@ export function validateMetaChanges({ repoPath, instanceType, realmPreferenceMap
     // Load blacklist
     const { blacklist: blacklistEntries } = loadBlacklist();
 
+    // Collect all attribute definitions from core meta files.
+    // Regional files reference attributes defined in core — these are NOT orphans.
+    const coreDefinitionIds = collectCoreDefinitionIds(coreMetaDir);
+
     const report = {
         removedAttributes: { total: 0, approved: 0, unapproved: [] },
         blacklistViolations: [],
         createdFiles: { total: 0, valid: 0, issues: [] },
         modifiedFiles: [],
+        indentationIssues: [],
         summary: ''
     };
 
@@ -262,8 +297,8 @@ export function validateMetaChanges({ repoPath, instanceType, realmPreferenceMap
 
         report.createdFiles.total++;
 
-        // Structural validation
-        const structural = validateRealmFileStructure(absPath);
+        // Structural validation (pass core definitions to avoid false orphan flags)
+        const structural = validateRealmFileStructure(absPath, coreDefinitionIds);
         if (!structural.ok) {
             report.createdFiles.issues.push({
                 file: relPath,
@@ -285,6 +320,10 @@ export function validateMetaChanges({ repoPath, instanceType, realmPreferenceMap
             }
         }
     }
+
+    // --- Check indentation consistency in all changed XML files ---
+    const { issues: indentIssues } = validateXmlIndentation(repoPath);
+    report.indentationIssues = indentIssues;
 
     report.summary = buildSummary(report);
     return report;
@@ -349,11 +388,25 @@ function buildSummary(report) {
         }
     }
 
+    // Indentation issues
+    lines.push('');
+    if (report.indentationIssues.length > 0) {
+        lines.push(
+            `  ${LOG_PREFIX.ERROR} Indentation issues: ${report.indentationIssues.length}`
+        );
+        for (const { file, line, message } of report.indentationIssues) {
+            lines.push(`    - ${path.basename(file)}:${line} — ${message}`);
+        }
+    } else {
+        lines.push(`  ${LOG_PREFIX.INFO} XML indentation is consistent`);
+    }
+
     // Overall verdict
     lines.push('');
     const hasProblems = report.removedAttributes.unapproved.length > 0
         || report.blacklistViolations.length > 0
-        || report.createdFiles.issues.length > 0;
+        || report.createdFiles.issues.length > 0
+        || report.indentationIssues.length > 0;
     lines.push(hasProblems
         ? `  ${LOG_PREFIX.ERROR} VALIDATION FAILED — review issues above`
         : `  ${LOG_PREFIX.INFO} VALIDATION PASSED — all changes look correct`
@@ -382,7 +435,8 @@ const INDENT_UNIT = '    '; // 4 spaces — matches SFCC conventions
 
 /**
  * Normalize XML indentation in all modified and created XML files.
- * Converts leading tabs to 4 spaces and trims trailing whitespace.
+ * Converts leading tabs to 4 spaces, trims trailing whitespace, and
+ * fixes mismatched opening/closing tag indentation.
  *
  * @param {string} repoPath - Absolute path to the sibling repository
  * @returns {{ fixed: string[], skipped: string[] }} Lists of fixed and skipped file paths
@@ -402,9 +456,10 @@ export function fixXmlIndentation(repoPath) {
 
         const original = fs.readFileSync(absPath, 'utf-8');
         const normalized = normalizeXmlWhitespace(original);
+        const repaired = fixClosingTagIndentation(normalized);
 
-        if (normalized !== original) {
-            fs.writeFileSync(absPath, normalized, 'utf-8');
+        if (repaired !== original) {
+            fs.writeFileSync(absPath, repaired, 'utf-8');
             fixed.push(relPath);
         }
     }
@@ -430,4 +485,163 @@ function normalizeXmlWhitespace(xml) {
             return replaced.trimEnd();
         })
         .join('\n');
+}
+
+/**
+ * Fix closing tag indentation to match the corresponding opening tag.
+ * Uses the same tag-stack approach as the validator, but rewrites lines
+ * where the closing tag's indentation doesn't match the opening tag.
+ *
+ * @param {string} xml - XML content (already tab-normalized)
+ * @returns {string} XML with closing tags re-indented to match their opening tags
+ * @private
+ */
+function fixClosingTagIndentation(xml) {
+    const lines = xml.split('\n');
+    const tagStack = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const indentMatch = line.match(/^([ \t]*)/);
+        const currentIndent = indentMatch ? indentMatch[1] : '';
+        const trimmed = line.trim();
+
+        if (!trimmed || trimmed.startsWith('<?') || trimmed.startsWith('<!--')) {
+            continue;
+        }
+
+        // Self-closing tag
+        if (trimmed.match(/^<[^/][^>]*\/>$/)) {
+            continue;
+        }
+
+        // Opening tag (not self-closing)
+        const openMatch = trimmed.match(/^<([a-zA-Z][\w-]*)\b/);
+        if (openMatch && !trimmed.endsWith('/>')) {
+            tagStack.push({ tag: openMatch[1], indent: currentIndent, line: i });
+            continue;
+        }
+
+        // Closing tag — fix indentation to match opening
+        const closeMatch = trimmed.match(/^<\/([a-zA-Z][\w-]*)\s*>$/);
+        if (closeMatch) {
+            const closingTag = closeMatch[1];
+
+            for (let j = tagStack.length - 1; j >= 0; j--) {
+                if (tagStack[j].tag === closingTag) {
+                    const opening = tagStack[j];
+                    tagStack.splice(j, 1);
+
+                    if (opening.indent !== currentIndent) {
+                        lines[i] = opening.indent + trimmed;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    return lines.join('\n');
+}
+
+// ============================================================================
+// XML INDENTATION VALIDATION
+// ============================================================================
+
+/**
+ * Validate that XML elements have consistent indentation in changed files.
+ * Checks that opening and closing tags share the same indent level,
+ * and children are indented deeper than their parent.
+ *
+ * @param {string} repoPath - Absolute path to the sibling repository
+ * @returns {{ issues: Array<{ file: string, line: number, message: string }> }}
+ */
+export function validateXmlIndentation(repoPath) {
+    const { added, modified } = getChangedFiles(repoPath);
+    const xmlFiles = [...added, ...modified].filter(f => f.endsWith('.xml'));
+    const issues = [];
+
+    for (const relPath of xmlFiles) {
+        const absPath = path.join(repoPath, relPath);
+        if (!fs.existsSync(absPath)) {
+            continue;
+        }
+
+        const content = fs.readFileSync(absPath, 'utf-8');
+        const fileIssues = checkIndentationConsistency(content);
+        for (const issue of fileIssues) {
+            issues.push({ file: relPath, ...issue });
+        }
+    }
+
+    return { issues };
+}
+
+/**
+ * Check a single XML file for indentation inconsistencies.
+ * Verifies opening/closing tag pairs have matching indentation.
+ *
+ * @param {string} xml - XML content
+ * @returns {Array<{ line: number, message: string }>}
+ * @private
+ */
+function checkIndentationConsistency(xml) {
+    const lines = xml.split('\n');
+    const issues = [];
+    const tagStack = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const indent = line.match(/^([ \t]*)/)[1].length;
+        const trimmed = line.trim();
+
+        if (!trimmed || trimmed.startsWith('<?') || trimmed.startsWith('<!--')) {
+            continue;
+        }
+
+        // Self-closing tag — no stack push needed
+        if (trimmed.match(/^<[^/][^>]*\/>$/)) {
+            continue;
+        }
+
+        // Opening tag (not self-closing)
+        const openMatch = trimmed.match(/^<([a-zA-Z][\w-]*)\b/);
+        if (openMatch && !trimmed.endsWith('/>')) {
+            tagStack.push({ tag: openMatch[1], indent, line: i + 1 });
+            continue;
+        }
+
+        // Closing tag
+        const closeMatch = trimmed.match(/^<\/([a-zA-Z][\w-]*)\s*>$/);
+        if (closeMatch) {
+            const closingTag = closeMatch[1];
+
+            // Find matching opening tag (pop stack until found)
+            let matched = false;
+            for (let j = tagStack.length - 1; j >= 0; j--) {
+                if (tagStack[j].tag === closingTag) {
+                    const opening = tagStack[j];
+                    tagStack.splice(j, 1);
+                    matched = true;
+
+                    if (opening.indent !== indent) {
+                        issues.push({
+                            line: i + 1,
+                            message: `</${closingTag}> indent (${indent}) does not match`
+                                + ` opening <${closingTag}> indent (${opening.indent})`
+                                + ` at line ${opening.line}`
+                        });
+                    }
+                    break;
+                }
+            }
+
+            if (!matched) {
+                // Unmatched closing tag — structural issue, skip
+                continue;
+            }
+        }
+    }
+
+    return issues;
 }

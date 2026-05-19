@@ -53,7 +53,8 @@ import { listSitePrefMetaFiles } from '../../../src/commands/meta/helpers/metaFi
 import {
     validateMetaChanges,
     formatValidationReport,
-    fixXmlIndentation
+    fixXmlIndentation,
+    validateXmlIndentation
 } from '../../../src/commands/meta/helpers/metaChangeValidator.js';
 
 let tmpDir;
@@ -317,5 +318,90 @@ describe('fixXmlIndentation', () => {
         const result = fixXmlIndentation(tmpDir);
 
         expect(result.fixed).toHaveLength(0);
+    });
+});
+
+// ============================================================================
+// validateXmlIndentation
+// ============================================================================
+
+describe('validateXmlIndentation', () => {
+    it('returns no issues for properly indented XML', () => {
+        const xml = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<metadata>',
+            '    <type-extension type-id="SitePreferences">',
+            '        <group-definitions>',
+            '            <attribute-group group-id="test">',
+            '                <attribute attribute-id="foo"/>',
+            '            </attribute-group>',
+            '        </group-definitions>',
+            '    </type-extension>',
+            '</metadata>'
+        ].join('\n');
+
+        const xmlPath = path.join(tmpDir, 'meta.test.xml');
+        fs.writeFileSync(xmlPath, xml, 'utf-8');
+
+        getChangedFiles.mockReturnValue({
+            added: [], modified: ['meta.test.xml'], deleted: []
+        });
+
+        const { issues } = validateXmlIndentation(tmpDir);
+        expect(issues).toHaveLength(0);
+    });
+
+    it('detects mismatched opening/closing tag indentation', () => {
+        const xml = [
+            '<metadata>',
+            '    <type-extension type-id="SitePreferences">',
+            '        <attribute-group group-id="test">',
+            '            <attribute attribute-id="foo"/>',
+            '</attribute-group>',
+            '    </type-extension>',
+            '</metadata>'
+        ].join('\n');
+
+        const xmlPath = path.join(tmpDir, 'bad.xml');
+        fs.writeFileSync(xmlPath, xml, 'utf-8');
+
+        getChangedFiles.mockReturnValue({
+            added: ['bad.xml'], modified: [], deleted: []
+        });
+
+        const { issues } = validateXmlIndentation(tmpDir);
+        expect(issues.length).toBeGreaterThan(0);
+        expect(issues[0].message).toContain('attribute-group');
+        expect(issues[0].message).toContain('does not match');
+    });
+
+    it('ignores self-closing tags', () => {
+        const xml = [
+            '<metadata>',
+            '    <attribute attribute-id="foo"/>',
+            '</metadata>'
+        ].join('\n');
+
+        const xmlPath = path.join(tmpDir, 'self-close.xml');
+        fs.writeFileSync(xmlPath, xml, 'utf-8');
+
+        getChangedFiles.mockReturnValue({
+            added: [], modified: ['self-close.xml'], deleted: []
+        });
+
+        const { issues } = validateXmlIndentation(tmpDir);
+        expect(issues).toHaveLength(0);
+    });
+
+    it('skips non-XML files', () => {
+        const jsPath = path.join(tmpDir, 'script.js');
+        fs.writeFileSync(jsPath, 'const x = 1;', 'utf-8');
+
+        getChangedFiles.mockReturnValue({
+            added: ['script.js'], modified: [], deleted: []
+        });
+
+        const { issues } = validateXmlIndentation(tmpDir);
+        expect(issues).toHaveLength(0);
     });
 });
