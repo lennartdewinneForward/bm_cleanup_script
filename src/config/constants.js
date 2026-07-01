@@ -53,7 +53,8 @@ export const DIRECTORIES = {
 export const IDENTIFIERS = {
     ALL_REALMS: 'ALL_REALMS',
     SITE_PREFERENCES: 'SitePreferences',
-    CUSTOM_ATTRIBUTE_PREFIX: 'c_'
+    CUSTOM_ATTRIBUTE_PREFIX: 'c_',
+    ORDER: 'Order'
 };
 
 /**
@@ -113,7 +114,15 @@ export const FILE_PATTERNS = {
     SITE_XML_VALIDATION: '_site_xml_validation.txt',
     BACKUP_SUFFIX: '_backup_',
     PREFERENCE_REFERENCES: '_preference_references.json',
-    ORPHAN_REPORT: '_orphan_report.txt'
+    ORPHAN_REPORT: '_orphan_report.txt',
+    CUSTOM_ATTR_UNUSED: '_unused_custom_attributes.txt',
+    CUSTOM_ATTR_USED: '_used_custom_attributes.txt',
+    CUSTOM_ATTR_FOR_DELETION: '_custom_attributes_for_deletion.txt',
+    CUSTOM_ATTR_COMBINED_REALMS: '_combined_realm_custom_attr_deletion_candidates.txt',
+    CUSTOM_ATTR_CROSS_REALM: '_cross_realm_custom_attr_deletion_candidates.txt',
+    CUSTOM_ATTR_REFERENCES: '_attribute_references.json',
+    CUSTOM_ATTR_META_CLEANUP_LOGIC_JSON: '_Meta-cleanup-logic.json',
+    CUSTOM_ATTR_META_CLEANUP_LOGIC_TXT: '_Meta-cleanup-logic.txt'
 };
 
 /**

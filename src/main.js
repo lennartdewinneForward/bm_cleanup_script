@@ -27,6 +27,7 @@ import { registerBlacklistCommands } from './commands/setup/actions/blacklist.js
 import { registerWhitelistCommands } from './commands/setup/actions/whitelist.js';
 import { registerMetaCommands } from './commands/meta/meta.js';
 import { registerCustomObjectCommands } from './commands/custom-objects/customObjects.js';
+import { registerCustomAttributesCommands } from './commands/custom-attributes/customAttributes.js';
 
 // ============================================================================
 // CLI ENTRYPOINT
@@ -125,6 +126,15 @@ registerMetaCommands(program);
 //   - list-co-whitelist: Show all whitelisted CO type patterns
 
 registerCustomObjectCommands(program);
+
+// ============================================================================
+// REGISTER CUSTOM ATTRIBUTES COMMANDS
+// ============================================================================
+// Location: src/commands/custom-attributes/customAttributes.js
+// Commands:
+//   - analyze-custom-attributes: Analyze custom attribute definitions vs code usage
+
+registerCustomAttributesCommands(program);
 
 // ============================================================================
 // REGISTER DEBUG COMMANDS

@@ -37,9 +37,9 @@ vi.mock('../../src/api/api.js', () => ({
 }));
 
 vi.mock('../../src/helpers/summarize.js', () => ({
-    buildPreferenceMeta: vi.fn(() => ({})),
+    buildMeta: vi.fn(() => ({})),
     processSitesAndGroups: vi.fn(async () => ({ usageRows: [] })),
-    buildPreferenceMatrix: vi.fn(() => [])
+    buildAttributeMatrix: vi.fn(() => [])
 }));
 
 vi.mock('../../src/io/siteXmlHelper.js', () => ({
@@ -62,7 +62,7 @@ vi.mock('../../src/config/constants.js', async (importOriginal) => {
 import {
     processPreferenceMatrixFiles,
     executePreferenceSummarization,
-    executePreferenceSummarizationFromMetadata
+    executeSummarizationFromMetadata
 } from '../../src/helpers/analyzer.js';
 import {
     parseCSVToNestedArray,
@@ -74,7 +74,7 @@ import {
 import { logProcessingRealm, logEmptyCSV, logRealmResults, logError } from '../../src/scripts/loggingScript/log.js';
 import { ensureResultsDir, filterSitesByScope, buildGroupSummaries } from '../../src/io/util.js';
 import { getAttributeGroups, getAllSites, getSitePreferences } from '../../src/api/api.js';
-import { buildPreferenceMeta, processSitesAndGroups, buildPreferenceMatrix } from '../../src/helpers/summarize.js';
+import { buildMeta, processSitesAndGroups, buildAttributeMatrix } from '../../src/helpers/summarize.js';
 import {
     getAllAttributeDefinitionsFromMetadata,
     getAttributeGroupsFromMetadataFile
@@ -319,12 +319,12 @@ describe('executePreferenceSummarization', () => {
             { id: 'SiteB' }
         ]);
         filterSitesByScope.mockImplementation((sites) => sites);
-        buildPreferenceMeta.mockReturnValue({
+        buildMeta.mockReturnValue({
             c_pref1: { id: 'c_pref1', type: 'string' },
             c_pref2: { id: 'c_pref2', type: 'boolean' }
         });
         processSitesAndGroups.mockResolvedValue({ usageRows: [] });
-        buildPreferenceMatrix.mockReturnValue([]);
+        buildAttributeMatrix.mockReturnValue([]);
         writeUsageCSV.mockReturnValue(path.join(tmpDir, 'usage.csv'));
         writeMatrixCSV.mockReturnValue(path.join(tmpDir, 'matrix.csv'));
         parseCSVToNestedArray.mockReturnValue([
@@ -401,9 +401,9 @@ describe('executePreferenceSummarization', () => {
 
         await executePreferenceSummarization(params);
 
-        expect(buildPreferenceMeta).toHaveBeenCalled();
+        expect(buildMeta).toHaveBeenCalled();
         expect(processSitesAndGroups).toHaveBeenCalled();
-        expect(buildPreferenceMatrix).toHaveBeenCalled();
+        expect(buildAttributeMatrix).toHaveBeenCalled();
         expect(writeUsageCSV).toHaveBeenCalled();
         expect(writeMatrixCSV).toHaveBeenCalled();
     });
@@ -516,10 +516,10 @@ describe('executePreferenceSummarization', () => {
 });
 
 // ============================================================================
-// executePreferenceSummarizationFromMetadata
+// executeSummarizationFromMetadata
 // ============================================================================
 
-describe('executePreferenceSummarizationFromMetadata', () => {
+describe('executeSummarizationFromMetadata', () => {
     let tmpDir;
 
     beforeEach(() => {
@@ -546,12 +546,12 @@ describe('executePreferenceSummarizationFromMetadata', () => {
             { id: 'SiteB' }
         ]);
         filterSitesByScope.mockImplementation((sites) => sites);
-        buildPreferenceMeta.mockReturnValue({
+        buildMeta.mockReturnValue({
             c_pref1: { id: 'c_pref1', type: 'string' },
             c_pref2: { id: 'c_pref2', type: 'boolean' }
         });
         processSitesAndGroups.mockResolvedValue({ usageRows: [] });
-        buildPreferenceMatrix.mockReturnValue([]);
+        buildAttributeMatrix.mockReturnValue([]);
         writeUsageCSV.mockReturnValue(path.join(tmpDir, 'usage.csv'));
         writeMatrixCSV.mockReturnValue(path.join(tmpDir, 'matrix.csv'));
         parseCSVToNestedArray.mockReturnValue([
@@ -577,7 +577,7 @@ describe('executePreferenceSummarizationFromMetadata', () => {
             metadataFilePath: '/path/to/metadata.xml'
         };
 
-        const result = await executePreferenceSummarizationFromMetadata(params);
+        const result = await executeSummarizationFromMetadata(params);
 
         expect(result).not.toBeNull();
         expect(result.realmDir).toBe(tmpDir);
@@ -594,7 +594,7 @@ describe('executePreferenceSummarizationFromMetadata', () => {
             metadataFilePath: '/path/to/metadata.xml'
         };
 
-        await executePreferenceSummarizationFromMetadata(params);
+        await executeSummarizationFromMetadata(params);
 
         expect(getAllAttributeDefinitionsFromMetadata).toHaveBeenCalledWith(
             '/path/to/metadata.xml',
@@ -619,7 +619,7 @@ describe('executePreferenceSummarizationFromMetadata', () => {
             metadataFilePath: '/path/to/metadata.xml'
         };
 
-        await executePreferenceSummarizationFromMetadata(params);
+        await executeSummarizationFromMetadata(params);
 
         expect(getAllSites).toHaveBeenCalledWith('APAC', null);
     });
@@ -639,7 +639,7 @@ describe('executePreferenceSummarizationFromMetadata', () => {
             metadataFilePath: '/path/to/metadata.xml'
         };
 
-        await executePreferenceSummarizationFromMetadata(params);
+        await executeSummarizationFromMetadata(params);
 
         expect(buildGroupSummaries).toHaveBeenCalledWith([
             { id: 'Search', name: 'Search', display_name: 'Search Settings' },
@@ -659,7 +659,7 @@ describe('executePreferenceSummarizationFromMetadata', () => {
             metadataFilePath: '/path/to/metadata.xml'
         };
 
-        const result = await executePreferenceSummarizationFromMetadata(params);
+        const result = await executeSummarizationFromMetadata(params);
 
         expect(result).toBeNull();
     });
@@ -679,7 +679,7 @@ describe('executePreferenceSummarizationFromMetadata', () => {
         };
 
         await expect(
-            executePreferenceSummarizationFromMetadata(params)
+            executeSummarizationFromMetadata(params)
         ).rejects.toThrow('Metadata file error for EU05');
     });
 
@@ -697,7 +697,7 @@ describe('executePreferenceSummarizationFromMetadata', () => {
         };
 
         try {
-            await executePreferenceSummarizationFromMetadata(params);
+            await executeSummarizationFromMetadata(params);
         } catch (error) {
             expect(error.originalError).toBe(originalError);
             expect(error.realm).toBe('GB');
@@ -727,7 +727,7 @@ describe('executePreferenceSummarizationFromMetadata', () => {
             realmName: 'EU05'
         };
 
-        const result = await executePreferenceSummarizationFromMetadata(params, progressInfo);
+        const result = await executeSummarizationFromMetadata(params, progressInfo);
 
         expect(result.success).toBe(true);
         expect(mockDisplay.startStep).toHaveBeenCalled();
@@ -748,7 +748,7 @@ describe('executePreferenceSummarizationFromMetadata', () => {
             metadataFilePath: '/path/to/metadata.xml'
         };
 
-        await executePreferenceSummarizationFromMetadata(params);
+        await executeSummarizationFromMetadata(params);
 
         expect(buildGroupSummaries).toHaveBeenCalledWith([
             { id: 'NoDisplayName', name: 'NoDisplayName', display_name: 'NoDisplayName' }

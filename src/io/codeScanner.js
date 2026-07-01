@@ -117,7 +117,9 @@ function countScannableFiles(dirPath) {
 /**
  * Check whether a line contains a genuine preference access pattern for the given ID.
  * Matches: string literals ('PrefId' / "PrefId"), dot access (.custom.PrefId),
- * and bracket access (.custom['PrefId'] / .custom["PrefId"]).
+ * bracket access (.custom['PrefId'] / .custom["PrefId"]),
+ * OCAPI c_ prefixed variants ('c_PrefId', .c_PrefId, ['c_PrefId']),
+ * and SFCC query syntax (custom.PrefId at word boundary).
  * @param {string} line - Source line to test
  * @param {string} preferenceId - Preference ID to look for
  * @returns {boolean} True if the line contains a real preference access
@@ -126,11 +128,17 @@ export function isPreferenceAccessMatch(line, preferenceId) {
     // Escape special regex characters in the preference ID
     const escaped = preferenceId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // Match: 'PrefId' | "PrefId" | .custom.PrefId (word boundary) | .custom['PrefId'] | .custom["PrefId"]
+    // Match: 'PrefId' | "PrefId"
+    //   | .custom.PrefId (word boundary) | custom.PrefId (word boundary before custom)
+    //   | .custom['PrefId'] | .custom["PrefId"]
+    //   | 'c_PrefId' | "c_PrefId" | .c_PrefId | ['c_PrefId']
     const pattern = new RegExp(
         `['"]${escaped}['"]`
-        + `|\\.custom\\.${escaped}\\b`
+        + `|\\bcustom\\.${escaped}\\b`
         + `|\\.custom\\[\\s*['"]${escaped}['"]\\s*\\]`
+        + `|['"]c_${escaped}['"]`
+        + `|\\.c_${escaped}\\b`
+        + `|\\[\\s*['"]c_${escaped}['"]\\s*\\]`
     );
 
     return pattern.test(line);
@@ -2818,4 +2826,854 @@ export async function findPreferenceUsage(preferenceId, repositoryPath, options 
         totalMatches: matches.length,
         cartridges
     };
+}
+
+/**
+ * Generic code scanner: scan repositories for references to a list of attribute IDs.
+ * Unlike findAllActivePreferencesUsage (which reads IDs from matrix files), this function
+ * accepts the attribute ID list directly — useful for custom attributes, order attributes, etc.
+ *
+ * @param {string[]} attributeIds - List of attribute IDs to search for
+ * @param {string|string[]} repositoryPathOrPaths - Repository path(s) to scan
+ * @param {Object} [options] - Optional settings
+ * @param {Function} [options.progressCallback] - (scannedCount, totalFiles) => void
+ * @param {number} [options.logEvery] - Log progress every N files (default 100)
+ * @returns {Promise<{used: Array<Object>, unused: string[]}>} Used/unused attribute results
+ */
+export async function scanAttributeUsageInCode(attributeIds, repositoryPathOrPaths, options = {}) {
+    const repositoryPaths = Array.isArray(repositoryPathOrPaths)
+        ? repositoryPathOrPaths
+        : [repositoryPathOrPaths];
+
+    const progressCallback = options.progressCallback || null;
+    const logEvery = options.logEvery || 100;
+    const log = progressCallback ? () => {} : console.log.bind(console);
+
+    if (attributeIds.length === 0) {
+        log('No attribute IDs to scan for.');
+        return { used: [], unused: [] };
+    }
+
+    log(`Scanning for ${attributeIds.length} attribute(s) across ${repositoryPaths.length} repository(ies)\n`);
+
+    // Get deprecated cartridges for tagging
+    const deprecatedCartridges = getDeprecatedCartridges(DEFAULT_COMPARISON_FILE_PATH);
+
+    // Collect all file paths
+    log('Collecting all file paths...');
+    const allFiles = [];
+    for (const repoPath of repositoryPaths) {
+        const repoName = path.basename(repoPath);
+        const filesForRepo = collectAllFilePaths(repoPath);
+        log(`  ${repoName}: ${filesForRepo.length} files`);
+        for (const fileInfo of filesForRepo) {
+            allFiles.push({ ...fileInfo, repoRoot: repoPath });
+        }
+    }
+    log(`Total files to scan: ${allFiles.length}\n`);
+
+    // Track which attributes are found in which cartridges
+    const attributeToCartridges = new Map();
+    attributeIds.forEach(id => attributeToCartridges.set(id, {
+        active: new Set(),
+        deprecated: new Set()
+    }));
+
+    // Track per-attribute code references
+    const attributeReferences = new Map();
+
+    let scannedFiles = 0;
+
+    if (!progressCallback) {
+        logStatusUpdate('Starting file scan...');
+    }
+
+    if (progressCallback) {
+        progressCallback(0, allFiles.length);
+    }
+
+    const FILE_SCAN_CONCURRENCY = 50;
+    const limit = pLimit(FILE_SCAN_CONCURRENCY);
+
+    const scanTasks = allFiles.map(fileInfo =>
+        limit(async () => {
+            const { foundPreferences, referenceDetails } =
+                await searchMultiplePreferencesInFileAsync(
+                    fileInfo.path, attributeIds
+                );
+
+            foundPreferences.forEach(attrId => {
+                if (fileInfo.cartridge) {
+                    const isDeprecated = deprecatedCartridges.has(fileInfo.cartridge);
+                    const category = isDeprecated ? 'deprecated' : 'active';
+                    attributeToCartridges.get(attrId)[category].add(fileInfo.cartridge);
+                }
+
+                const lineDetails = referenceDetails.get(attrId) || [];
+                if (!attributeReferences.has(attrId)) {
+                    attributeReferences.set(attrId, []);
+                }
+                const relativePath = path.relative(fileInfo.repoRoot, fileInfo.path);
+                for (const detail of lineDetails) {
+                    attributeReferences.get(attrId).push({
+                        file: relativePath,
+                        line: detail.lineNumber,
+                        text: detail.lineText,
+                        cartridge: fileInfo.cartridge || null
+                    });
+                }
+            });
+
+            scannedFiles += 1;
+
+            if (scannedFiles % logEvery === 0 || scannedFiles === allFiles.length) {
+                if (progressCallback) {
+                    progressCallback(scannedFiles, allFiles.length);
+                } else {
+                    const percent = ((scannedFiles / allFiles.length) * 100).toFixed(1);
+                    logStatusUpdate(
+                        `Scanned ${scannedFiles}/${allFiles.length} files (${percent}%)`
+                    );
+                }
+            }
+        })
+    );
+
+    await Promise.all(scanTasks);
+    logStatusClear();
+
+    // Build results
+    const used = [];
+    const unused = [];
+
+    for (const attrId of attributeIds) {
+        const cartridgeData = attributeToCartridges.get(attrId);
+        const activeCartridges = Array.from(cartridgeData.active).sort();
+        const deprecatedCartridgeList = Array.from(cartridgeData.deprecated).sort();
+        const totalMatches = activeCartridges.length + deprecatedCartridgeList.length;
+
+        if (totalMatches > 0) {
+            used.push({
+                attributeId: attrId,
+                activeCartridges,
+                deprecatedCartridges: deprecatedCartridgeList,
+                references: attributeReferences.get(attrId) || []
+            });
+        } else {
+            unused.push(attrId);
+        }
+    }
+
+    log(`\nScan complete: ${used.length} used, ${unused.length} unused attribute(s)\n`);
+
+    return { used, unused };
+}
+
+// ============================================================================
+// CUSTOM ATTRIBUTE DELETION CANDIDATE GENERATION
+// Mirrors the preference deletion pipeline but without value data.
+// Tiers: P1 (no code), P3 (deprecated code only), P5 (realm-specific).
+// ============================================================================
+
+/**
+ * Parse a metadata backup XML file to extract attribute definition IDs for a given object type.
+ * Uses simple regex matching (no XML parser dependency).
+ *
+ * @param {string} xmlFilePath - Absolute path to the metadata backup XML file
+ * @param {string} objectType - Object type to match (e.g. 'Order', 'Product')
+ * @returns {Set<string>} Set of attribute definition IDs
+ */
+export function parseAttributeIdsFromMetadata(xmlFilePath, objectType) {
+    const attributeIds = new Set();
+    const content = fs.readFileSync(xmlFilePath, 'utf-8');
+    const lines = content.split(/\r?\n/);
+    const typeIdPattern = `type-id="${objectType}"`;
+
+    let inTargetSection = false;
+
+    for (const line of lines) {
+        if (line.includes(typeIdPattern)) {
+            inTargetSection = true;
+            continue;
+        }
+
+        if (inTargetSection && line.includes('</type-extension>')) {
+            inTargetSection = false;
+            // Don't break — there may be multiple type-extension blocks for the same type
+            continue;
+        }
+
+        if (inTargetSection) {
+            const match = line.match(/attribute-definition\s+attribute-id="([^"]+)"/);
+            if (match) {
+                attributeIds.add(match[1]);
+            }
+        }
+    }
+
+    return attributeIds;
+}
+
+/**
+ * Build a map of realm → Set of attribute IDs that exist in each realm's metadata
+ * for a given object type.
+ *
+ * @param {string[]} allRealms - List of realm names
+ * @param {string} objectType - Object type (e.g. 'Order')
+ * @returns {Map<string, Set<string>>} Map of realm → attribute IDs
+ * @private
+ */
+function buildPerRealmMetadataMap(allRealms, objectType) {
+    const metadataMap = new Map();
+
+    for (const realm of allRealms) {
+        const metadataFile = findLatestMetadataFile(realm);
+
+        if (!metadataFile) {
+            console.log(
+                `  ⚠ No metadata backup found for ${realm}`
+                + ' — skipping metadata cross-check for this realm'
+            );
+            continue;
+        }
+
+        const attributeIds = parseAttributeIdsFromMetadata(metadataFile, objectType);
+        metadataMap.set(realm, attributeIds);
+
+        console.log(
+            `  ${realm}: ${attributeIds.size} ${objectType} attribute definition(s)`
+            + ` in metadata (${path.basename(metadataFile)})`
+        );
+    }
+
+    return metadataMap;
+}
+
+/**
+ * Generate custom attribute deletion candidates with per-realm targeting.
+ * Mirrors the preference deletion pipeline but without value data.
+ *
+ * Tiers:
+ *   [P1] No code references — safest to remove
+ *   [P3] Only in deprecated cartridges — probably safe
+ *   [P5] Active code only in some realms — delete from non-covered realms
+ *
+ * @param {Object} params
+ * @param {Object} params.scanResults - Results from scanAttributeUsageInCode ({used, unused})
+ * @param {string[]} params.allRealms - All available realm names
+ * @param {string} params.instanceType - Instance type (development/sandbox/staging)
+ * @param {string} params.objectType - Object type (e.g. 'Order')
+ * @param {string[]} params.repoNames - Repository names scanned
+ * @returns {{ outputFilePath: string|null, perRealmFiles: string[], perRealmTiers: Map }}
+ */
+export function generateCustomAttributeDeletionCandidates({
+    scanResults,
+    allRealms,
+    instanceType,
+    objectType,
+    repoNames
+}) {
+    const resultsDir = ensureResultsDir(IDENTIFIERS.ALL_REALMS, instanceType);
+
+    // Load per-realm active cartridge sets
+    const perRealmCartridges = buildPerRealmCartridgeSet(instanceType);
+    const hasRealmData = allRealms.length > 0 && perRealmCartridges.size > 0;
+
+    // Load blacklist entries
+    const blacklistEntries = loadBlacklist().blacklist;
+    const allCandidateIds = [
+        ...scanResults.unused,
+        ...scanResults.used
+            .filter(u =>
+                u.activeCartridges.length === 0 && u.deprecatedCartridges.length > 0
+            )
+            .map(u => u.attributeId),
+        ...scanResults.used
+            .filter(u => {
+                if (u.activeCartridges.length === 0) return false;
+                const applicableRealms = determineRealmsByCode(
+                    u.activeCartridges, perRealmCartridges, allRealms
+                );
+                return applicableRealms.length > 0
+                    && !applicableRealms.includes(REALM_TAGS.ALL);
+            })
+            .map(u => u.attributeId)
+    ];
+    const { blocked: blacklistedAttributes } = filterBlacklisted(
+        allCandidateIds, blacklistEntries
+    );
+    const blacklistedSet = new Set(blacklistedAttributes);
+
+    // Build code usage map from scan results
+    const codeUsageMap = new Map();
+    for (const entry of scanResults.used) {
+        codeUsageMap.set(entry.attributeId, {
+            activeCartridges: entry.activeCartridges,
+            deprecatedCartridges: entry.deprecatedCartridges
+        });
+    }
+
+    // Classify into tiers (global)
+    const fp1 = []; // No code refs
+    const fp3 = []; // Deprecated code only
+    const fp5 = []; // Active code, not on all realms
+
+    for (const attrId of scanResults.unused) {
+        if (blacklistedSet.has(attrId)) continue;
+        fp1.push({ id: attrId, realms: [REALM_TAGS.ALL] });
+    }
+
+    for (const entry of scanResults.used) {
+        if (blacklistedSet.has(entry.attributeId)) continue;
+
+        const hasActiveCode = entry.activeCartridges.length > 0;
+        const hasDeprecatedCode = entry.deprecatedCartridges.length > 0;
+
+        if (!hasActiveCode && hasDeprecatedCode) {
+            // P3: Only referenced in deprecated cartridges
+            fp3.push({
+                id: entry.attributeId,
+                deprecatedCartridges: entry.deprecatedCartridges,
+                realms: [REALM_TAGS.ALL]
+            });
+        } else if (hasActiveCode && hasRealmData) {
+            // Check for P5: active code not on all realms
+            const applicableRealms = determineRealmsByCode(
+                entry.activeCartridges, perRealmCartridges, allRealms
+            );
+
+            if (applicableRealms.length > 0
+                && !applicableRealms.includes(REALM_TAGS.ALL)) {
+                fp5.push({
+                    id: entry.attributeId,
+                    activeCartridges: entry.activeCartridges,
+                    deprecatedCartridges: entry.deprecatedCartridges,
+                    codeRealms: allRealms.filter(
+                        r => !applicableRealms.includes(r)
+                    ),
+                    realms: applicableRealms
+                });
+            }
+        }
+    }
+
+    // Build tier lookup
+    const tierLookup = new Map();
+    for (const c of fp1) { tierLookup.set(c.id, 1); }
+    for (const c of fp3) { tierLookup.set(c.id, 3); }
+    for (const c of fp5) { tierLookup.set(c.id, 5); }
+
+    const totalCandidates = fp1.length + fp3.length + fp5.length;
+
+    if (totalCandidates === 0) {
+        console.log(
+            '✓ No custom attributes marked for deletion'
+        );
+        return { outputFilePath: null, perRealmFiles: [], perRealmTiers: new Map() };
+    }
+
+    // --- Write ALL_REALMS unified deletion file ---
+    const outputFilename = `${objectType}${FILE_PATTERNS.CUSTOM_ATTR_FOR_DELETION}`;
+    const outputFilePath = path.join(resultsDir, outputFilename);
+    const totalAnalyzed = scanResults.used.length + scanResults.unused.length;
+
+    const lines = [
+        `${objectType} Custom Attributes — Deletion Candidates (Priority Ranked)`,
+        `Generated: ${new Date().toISOString()}`,
+        `Instance Type: ${instanceType}`,
+        `Realms: ${allRealms.join(', ')}`,
+        `Repositories scanned: ${repoNames.join(', ')}`,
+        '',
+        'Analysis Summary:',
+        `  • Total ${objectType} attributes analyzed: ${totalAnalyzed}`,
+        `  • [P1] Safe to delete (no code references): ${fp1.length}`,
+        `  • [P3] Review: deprecated code only: ${fp3.length}`,
+        `  • [P5] Realm-specific: active code not on all realms: ${fp5.length}`,
+        `  • Total deletion candidates: ${totalCandidates}`
+    ];
+
+    if (blacklistedAttributes.length > 0) {
+        lines.push(`  • Blacklisted (protected): ${blacklistedAttributes.length}`);
+    }
+
+    lines.push(
+        '',
+        'Priority Legend:',
+        '  [P1] No code references — safest to remove',
+        '  [P3] Only in deprecated cartridges — probably safe',
+        '  [P5] Active code only in some realms — delete from non-covered realms',
+        '',
+        'NOTE: Custom attributes have no value data analysis (unlike site preferences).',
+        'Tiers P2 and P4 are not applicable for custom attributes.'
+    );
+
+    // --- P1 Section ---
+    if (fp1.length > 0) {
+        lines.push(
+            '',
+            '================================================================================',
+            '',
+            `--- [P1] Safe to Delete (No Code References) --- [${fp1.length} attributes]`
+        );
+        for (const c of fp1) {
+            lines.push(`${c.id}  |  realms: ${c.realms.join(', ')}`);
+        }
+    }
+
+    // --- P3 Section ---
+    if (fp3.length > 0) {
+        lines.push(
+            '',
+            '================================================================================',
+            '',
+            `--- [P3] Review: Deprecated Code Only --- [${fp3.length} attributes]`
+        );
+        for (const c of fp3) {
+            lines.push(
+                `${c.id}  |  deprecated: ${c.deprecatedCartridges.join(', ')}`
+                + `  |  realms: ${c.realms.join(', ')}`
+            );
+        }
+    }
+
+    // --- P5 Section ---
+    if (fp5.length > 0) {
+        lines.push(
+            '',
+            '================================================================================',
+            '',
+            `--- [P5] Realm-Specific: Active Code Not on All Realms --- [${fp5.length} attributes]`
+        );
+        for (const c of fp5) {
+            lines.push(
+                `${c.id}  |  active in: ${c.codeRealms.join(', ')}`
+                + `  |  code: ${c.activeCartridges.join(', ')}`
+                + `  |  realms: ${c.realms.join(', ')}`
+            );
+        }
+    }
+
+    // --- Blacklisted Section ---
+    if (blacklistedAttributes.length > 0) {
+        lines.push(
+            '',
+            '================================================================================',
+            '',
+            '--- Blacklisted Attributes (Protected) ---',
+            ...blacklistedAttributes.sort()
+        );
+    }
+
+    fs.writeFileSync(outputFilePath, lines.join('\n'), 'utf-8');
+
+    // --- Generate per-realm deletion files ---
+    let perRealmFiles = [];
+    let perRealmTiers = new Map();
+
+    if (hasRealmData) {
+        console.log('\nBuilding per-realm metadata cross-check map...');
+        const perRealmMetadata = buildPerRealmMetadataMap(allRealms, objectType);
+
+        const allCandidates = [...fp1, ...fp3, ...fp5];
+        const result = generatePerRealmCustomAttrDeletionFiles({
+            allCandidates,
+            tierLookup,
+            perRealmCartridges,
+            perRealmMetadata,
+            allRealms,
+            instanceType,
+            objectType,
+            codeUsageMap,
+            blacklistEntries,
+            blacklistedAttributes,
+            totalAnalyzed,
+            repoNames
+        });
+        perRealmFiles = result.generatedFiles;
+        perRealmTiers = result.perRealmTiers;
+
+        console.log(
+            `✓ Generated ${perRealmFiles.length} per-realm deletion file(s)`
+        );
+
+        // Generate combined per-realm listing
+        const combinedPath = writeCustomAttrCombinedRealmFile({
+            perRealmTiers, allRealms, instanceType, objectType, resultsDir
+        });
+        console.log(`✓ Generated combined per-realm listing: ${path.basename(combinedPath)}`);
+
+        // Generate cross-realm intersection file
+        const crossRealmPath = writeCustomAttrCrossRealmFile({
+            perRealmTiers, allRealms, instanceType, objectType, resultsDir
+        });
+        if (crossRealmPath) {
+            console.log(
+                `✓ Generated cross-realm intersection file: ${path.basename(crossRealmPath)}`
+            );
+        } else {
+            console.log('✓ No cross-realm intersection candidates found');
+        }
+    }
+
+    return { outputFilePath, perRealmFiles, perRealmTiers };
+}
+
+/**
+ * Generate per-realm custom attribute deletion files.
+ * Re-classifies global candidates using realm-specific cartridge data.
+ *
+ * @param {Object} params
+ * @returns {{ generatedFiles: string[], perRealmTiers: Map }}
+ * @private
+ */
+function generatePerRealmCustomAttrDeletionFiles({
+    allCandidates,
+    tierLookup,
+    perRealmCartridges,
+    perRealmMetadata,
+    allRealms,
+    instanceType,
+    objectType,
+    codeUsageMap,
+    blacklistEntries,
+    blacklistedAttributes,
+    totalAnalyzed,
+    repoNames
+}) {
+    const generatedFiles = [];
+    const perRealmTiers = new Map();
+
+    for (const realm of allRealms) {
+        const realmResultsDir = ensureResultsDir(realm, instanceType);
+        const realmCarts = perRealmCartridges.get(realm) || new Set();
+        const realmAttributes = perRealmMetadata.get(realm) || null;
+
+        const rp1 = [];
+        const rp3 = [];
+        const rp5 = [];
+        let metadataSkipped = 0;
+
+        for (const candidate of allCandidates) {
+            const globalTier = tierLookup.get(candidate.id);
+            if (!globalTier) continue;
+
+            // Cross-check: skip if metadata available and attribute not on realm
+            // Exception: P5 candidates (may be in shared meta XML)
+            if (globalTier !== 5
+                && realmAttributes && !realmAttributes.has(candidate.id)) {
+                metadataSkipped++;
+                continue;
+            }
+
+            if (globalTier === 5) {
+                const usage = codeUsageMap.get(candidate.id);
+                const hasActiveCodeOnRealm = usage?.activeCartridges?.some(
+                    c => realmCarts.has(c)
+                ) || false;
+
+                if (hasActiveCodeOnRealm) continue;
+
+                // Check deprecated code on this realm
+                const hasDeprecatedCodeOnRealm = usage?.deprecatedCartridges?.some(
+                    c => realmCarts.has(c)
+                ) || false;
+
+                if (hasDeprecatedCodeOnRealm) {
+                    rp3.push({ ...candidate });
+                } else {
+                    rp1.push({ ...candidate });
+                }
+                continue;
+            }
+
+            if (globalTier === 1) {
+                rp1.push({ ...candidate });
+                continue;
+            }
+
+            if (globalTier === 3) {
+                const usage = codeUsageMap.get(candidate.id);
+                const hasDeprecatedCodeOnRealm = usage?.deprecatedCartridges?.some(
+                    c => realmCarts.has(c)
+                ) || false;
+
+                if (hasDeprecatedCodeOnRealm) {
+                    rp3.push({ ...candidate });
+                } else {
+                    // Deprecated code NOT on this realm → downgrade to P1
+                    rp1.push({ ...candidate });
+                }
+                continue;
+            }
+        }
+
+        // Apply realm-specific blacklist filtering
+        const realmCandidateIds = [...rp1, ...rp3, ...rp5].map(c => c.id);
+        const { blocked: realmBlocked } = filterBlacklisted(
+            realmCandidateIds, blacklistEntries, realm
+        );
+        const realmBlockedSet = new Set(realmBlocked);
+        const filterBl = (arr) => arr.filter(c => !realmBlockedSet.has(c.id));
+        const frp1 = filterBl(rp1);
+        const frp3 = filterBl(rp3);
+        const frp5 = filterBl(rp5);
+
+        const combinedBlacklisted = [
+            ...blacklistedAttributes,
+            ...realmBlocked
+        ].filter((v, i, a) => a.indexOf(v) === i).sort();
+
+        // Store per-realm tier data
+        perRealmTiers.set(realm, { p1: frp1, p3: frp3, p5: frp5 });
+
+        // Write per-realm file
+        const realmTotal = frp1.length + frp3.length + frp5.length;
+        const realmFilename = `${realm}_${objectType}${FILE_PATTERNS.CUSTOM_ATTR_FOR_DELETION}`;
+        const realmFilePath = path.join(realmResultsDir, realmFilename);
+
+        const realmLines = [
+            `${objectType} Custom Attributes — Deletion Candidates for ${realm}`,
+            `Generated: ${new Date().toISOString()}`,
+            `Instance Type: ${instanceType}`,
+            `Realm: ${realm}`,
+            `Repositories scanned: ${repoNames.join(', ')}`,
+            '',
+            'Analysis Summary:',
+            `  • Total ${objectType} attributes analyzed: ${totalAnalyzed}`,
+            `  • [P1] Safe to delete (no code references on ${realm}): ${frp1.length}`,
+            `  • [P3] Review: deprecated code only on ${realm}: ${frp3.length}`,
+            `  • [P5] Realm-specific: ${frp5.length}`,
+            `  • Total deletion candidates for ${realm}: ${realmTotal}`
+        ];
+
+        if (metadataSkipped > 0) {
+            realmLines.push(`  • Skipped (not in ${realm} metadata): ${metadataSkipped}`);
+        }
+
+        if (combinedBlacklisted.length > 0) {
+            realmLines.push(`  • Blacklisted (protected): ${combinedBlacklisted.length}`);
+        }
+
+        // --- P1 Section ---
+        if (frp1.length > 0) {
+            realmLines.push(
+                '',
+                '================================================================================',
+                '',
+                `--- [P1] Safe to Delete (No Code References on ${realm}) --- [${frp1.length} attributes]`
+            );
+            for (const c of frp1) {
+                realmLines.push(c.id);
+            }
+        }
+
+        // --- P3 Section ---
+        if (frp3.length > 0) {
+            realmLines.push(
+                '',
+                '================================================================================',
+                '',
+                `--- [P3] Review: Deprecated Code Only on ${realm} --- [${frp3.length} attributes]`
+            );
+            for (const c of frp3) {
+                const depCarts = c.deprecatedCartridges
+                    ? `  |  deprecated: ${c.deprecatedCartridges.join(', ')}`
+                    : '';
+                realmLines.push(`${c.id}${depCarts}`);
+            }
+        }
+
+        // --- P5 Section ---
+        if (frp5.length > 0) {
+            realmLines.push(
+                '',
+                '================================================================================',
+                '',
+                `--- [P5] Realm-Specific --- [${frp5.length} attributes]`
+            );
+            for (const c of frp5) {
+                realmLines.push(
+                    `${c.id}  |  active in: ${(c.codeRealms || []).join(', ')}`
+                    + `  |  code: ${(c.activeCartridges || []).join(', ')}`
+                );
+            }
+        }
+
+        // --- Blacklisted Section ---
+        if (combinedBlacklisted.length > 0) {
+            realmLines.push(
+                '',
+                '================================================================================',
+                '',
+                '--- Blacklisted Attributes (Protected) ---',
+                ...combinedBlacklisted
+            );
+        }
+
+        fs.writeFileSync(realmFilePath, realmLines.join('\n'), 'utf-8');
+        generatedFiles.push(realmFilePath);
+    }
+
+    return { generatedFiles, perRealmTiers };
+}
+
+/**
+ * Write combined per-realm custom attribute deletion listing (all realms in one file).
+ *
+ * @param {Object} params
+ * @returns {string} Path to the generated file
+ * @private
+ */
+function writeCustomAttrCombinedRealmFile({
+    perRealmTiers, allRealms, instanceType, objectType, resultsDir
+}) {
+    const filePath = path.join(
+        resultsDir,
+        `${instanceType}${FILE_PATTERNS.CUSTOM_ATTR_COMBINED_REALMS}`
+    );
+
+    const lines = [
+        `${objectType} Custom Attributes — Combined Per-Realm Deletion Candidates`,
+        `Generated: ${new Date().toISOString()}`,
+        `Instance Type: ${instanceType}`,
+        `Realms: ${allRealms.join(', ')}`,
+        ''
+    ];
+
+    for (const realm of allRealms) {
+        const tiers = perRealmTiers.get(realm);
+        if (!tiers) continue;
+
+        const total = tiers.p1.length + tiers.p3.length + (tiers.p5?.length || 0);
+        lines.push(
+            '================================================================================',
+            `=== ${realm} === [${total} deletion candidates]`,
+            '================================================================================',
+            ''
+        );
+
+        if (tiers.p1.length > 0) {
+            lines.push(`--- [P1] Safe to Delete --- [${tiers.p1.length} attributes]`);
+            for (const c of tiers.p1) { lines.push(c.id); }
+            lines.push('');
+        }
+
+        if (tiers.p3.length > 0) {
+            lines.push(`--- [P3] Deprecated Code Only --- [${tiers.p3.length} attributes]`);
+            for (const c of tiers.p3) {
+                const depCarts = c.deprecatedCartridges
+                    ? `  |  deprecated: ${c.deprecatedCartridges.join(', ')}`
+                    : '';
+                lines.push(`${c.id}${depCarts}`);
+            }
+            lines.push('');
+        }
+
+        if (tiers.p5?.length > 0) {
+            lines.push(`--- [P5] Realm-Specific --- [${tiers.p5.length} attributes]`);
+            for (const c of tiers.p5) {
+                lines.push(
+                    `${c.id}  |  active in: ${(c.codeRealms || []).join(', ')}`
+                    + `  |  code: ${(c.activeCartridges || []).join(', ')}`
+                );
+            }
+            lines.push('');
+        }
+    }
+
+    fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+    return filePath;
+}
+
+/**
+ * Write cross-realm intersection file for custom attributes
+ * (only attributes that are the same tier on ALL realms).
+ *
+ * @param {Object} params
+ * @returns {string|null} Path to the generated file, or null if no intersection
+ * @private
+ */
+function writeCustomAttrCrossRealmFile({
+    perRealmTiers, allRealms, instanceType, objectType, resultsDir
+}) {
+    const realmCount = allRealms.length;
+    const attrTierCounts = new Map();
+
+    for (const realm of allRealms) {
+        const tiers = perRealmTiers.get(realm);
+        if (!tiers) return null;
+
+        for (const c of tiers.p1) {
+            if (!attrTierCounts.has(c.id)) attrTierCounts.set(c.id, new Map());
+            const counts = attrTierCounts.get(c.id);
+            counts.set('P1', (counts.get('P1') || 0) + 1);
+        }
+        for (const c of tiers.p3) {
+            if (!attrTierCounts.has(c.id)) attrTierCounts.set(c.id, new Map());
+            const counts = attrTierCounts.get(c.id);
+            counts.set('P3', (counts.get('P3') || 0) + 1);
+        }
+        for (const c of (tiers.p5 || [])) {
+            if (!attrTierCounts.has(c.id)) attrTierCounts.set(c.id, new Map());
+            const counts = attrTierCounts.get(c.id);
+            counts.set('P5', (counts.get('P5') || 0) + 1);
+        }
+    }
+
+    // Find attributes that are the same tier on ALL realms
+    const crossP1 = [];
+    const crossP3 = [];
+
+    for (const [attrId, counts] of attrTierCounts) {
+        if (counts.get('P1') === realmCount) crossP1.push(attrId);
+        if (counts.get('P3') === realmCount) crossP3.push(attrId);
+    }
+
+    crossP1.sort();
+    crossP3.sort();
+
+    const totalCross = crossP1.length + crossP3.length;
+    if (totalCross === 0) return null;
+
+    const filePath = path.join(
+        resultsDir,
+        `${instanceType}${FILE_PATTERNS.CUSTOM_ATTR_CROSS_REALM}`
+    );
+
+    const lines = [
+        `${objectType} Custom Attributes — Cross-Realm Deletion Candidates`,
+        `Generated: ${new Date().toISOString()}`,
+        `Instance Type: ${instanceType}`,
+        `Realms analyzed: ${realmCount} (${allRealms.join(', ')})`,
+        '',
+        'Only attributes that have the SAME tier on ALL realms are listed here.',
+        'These are the safest candidates for bulk deletion.',
+        '',
+        `[P1] Same tier on all realms (no code): ${crossP1.length}`,
+        `[P3] Same tier on all realms (deprecated code only): ${crossP3.length}`,
+        `Total: ${totalCross}`
+    ];
+
+    if (crossP1.length > 0) {
+        lines.push(
+            '',
+            '================================================================================',
+            '',
+            `--- [P1] Safe to Delete on All Realms (No Code References) --- [${crossP1.length} attributes]`
+        );
+        for (const id of crossP1) { lines.push(id); }
+    }
+
+    if (crossP3.length > 0) {
+        lines.push(
+            '',
+            '================================================================================',
+            '',
+            `--- [P3] Deprecated Code Only on All Realms --- [${crossP3.length} attributes]`
+        );
+        for (const id of crossP3) { lines.push(id); }
+    }
+
+    fs.writeFileSync(filePath, lines.join('\n'), 'utf-8');
+    return filePath;
 }

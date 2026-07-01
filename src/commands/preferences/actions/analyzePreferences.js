@@ -27,7 +27,7 @@ import {
 import {
     processPreferenceMatrixFiles,
     executePreferenceSummarization,
-    executePreferenceSummarizationFromMetadata
+    executeSummarizationFromMetadata
 } from '../../../helpers/analyzer.js';
 import { exportSitesCartridgesToCSV } from '../../../io/csv.js';
 import {
@@ -141,7 +141,7 @@ export async function analyzePreferences() {
 
                     // Steps 2-5: metadata flow (fetch, groups, matrices, export)
                     try {
-                        const result = await executePreferenceSummarizationFromMetadata(
+                        const result = await executeSummarizationFromMetadata(
                             {
                                 realm, objectType, instanceType, scope, siteId,
                                 metadataFilePath: refreshResult.filePath,

@@ -62,9 +62,9 @@ This document defines the AI agents and their capabilities for the Cleanup-Scrip
   - [src/commands/preferences/helpers/generateSitePreferences.js](src/commands/preferences/helpers/generateSitePreferences.js) - Site preference JSON generation
 
 - **Key Functions:**
-  - `buildPreferenceMeta()` - Normalize OCAPI definitions
+  - `buildMeta()` - Normalize OCAPI definitions
   - `processSitesAndGroups()` - Aggregate site preference values
-  - `buildPreferenceMatrix()` - Generate usage matrix
+  - `buildAttributeMatrix()` - Generate usage matrix
   - `findUnusedPreferences()` - Identify preferences with no values
   - `findAllActivePreferencesUsage()` - Scan cartridge code for references
   - `generatePreferenceDeletionCandidates()` - Build per-realm deletion files with priority tiers

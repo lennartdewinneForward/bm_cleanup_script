@@ -82,7 +82,7 @@ vi.mock('../../../src/scripts/loggingScript/log.js', () => ({
 vi.mock('../../../src/helpers/analyzer.js', () => ({
     processPreferenceMatrixFiles: vi.fn(() => []),
     executePreferenceSummarization: vi.fn(),
-    executePreferenceSummarizationFromMetadata: vi.fn()
+    executeSummarizationFromMetadata: vi.fn()
 }));
 
 vi.mock('../../../src/io/csv.js', () => ({
@@ -192,7 +192,7 @@ import * as prompts from '../../../src/commands/prompts/index.js';
 import { validateRealmsSelection } from '../../../src/commands/preferences/helpers/realmHelpers.js';
 import { refreshMetadataBackupForRealm } from '../../../src/helpers/backupJob.js';
 import {
-    executePreferenceSummarizationFromMetadata,
+    executeSummarizationFromMetadata,
     executePreferenceSummarization,
     processPreferenceMatrixFiles
 } from '../../../src/helpers/analyzer.js';
@@ -392,7 +392,7 @@ describe('analyzePreferences', () => {
         });
         prompts.promptBackupCachePreference.mockResolvedValueOnce(false);
 
-        executePreferenceSummarizationFromMetadata.mockResolvedValueOnce({
+        executeSummarizationFromMetadata.mockResolvedValueOnce({
             matrixPath: '/mock/matrix.csv'
         });
 
@@ -407,7 +407,7 @@ describe('analyzePreferences', () => {
         await triggerCommand('analyze-preferences');
 
         expect(refreshMetadataBackupForRealm).toHaveBeenCalled();
-        expect(executePreferenceSummarizationFromMetadata).toHaveBeenCalled();
+        expect(executeSummarizationFromMetadata).toHaveBeenCalled();
     });
 
     it('falls back to OCAPI when metadata backup fails', async () => {
@@ -439,7 +439,7 @@ describe('analyzePreferences', () => {
         prompts.promptBackupCachePreference.mockResolvedValueOnce(false);
 
         refreshMetadataBackupForRealm.mockResolvedValueOnce({ ok: true, filePath: '/mock/backup.xml' });
-        executePreferenceSummarizationFromMetadata.mockRejectedValueOnce(new Error('API down'));
+        executeSummarizationFromMetadata.mockRejectedValueOnce(new Error('API down'));
 
         await triggerCommand('analyze-preferences');
 
@@ -455,7 +455,7 @@ describe('analyzePreferences', () => {
         });
         prompts.promptBackupCachePreference.mockResolvedValueOnce(false);
 
-        executePreferenceSummarizationFromMetadata.mockResolvedValueOnce({});
+        executeSummarizationFromMetadata.mockResolvedValueOnce({});
 
         findAllMatrixFiles.mockReturnValueOnce([
             { realm: 'EU05', matrixFile: '/mock/EU05_matrix.csv' }
@@ -477,7 +477,7 @@ describe('analyzePreferences', () => {
         });
         prompts.promptBackupCachePreference.mockResolvedValueOnce(false);
 
-        executePreferenceSummarizationFromMetadata.mockResolvedValueOnce({});
+        executeSummarizationFromMetadata.mockResolvedValueOnce({});
         findAllMatrixFiles.mockReturnValueOnce([
             { realm: 'EU05', matrixFile: '/mock/EU05_matrix.csv' }
         ]);

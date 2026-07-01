@@ -203,8 +203,10 @@ describe('getJobExecutionStatus', () => {
 describe('downloadWebdavFile', () => {
     it('throws error when hostname is missing', async () => {
         const result = await downloadWebdavFile(
-            { hostname: '', filePath: '/path', username: 'u', password: 'p' },
-            tmpDir
+            { hostname: '', filePath: '/path' },
+            tmpDir,
+            null,
+            'EU05'
         );
 
         expect(result).toBeNull();
@@ -213,19 +215,20 @@ describe('downloadWebdavFile', () => {
         );
     });
 
-    it('throws error when username/password missing', async () => {
+    it('returns null when realm is missing', async () => {
         const result = await downloadWebdavFile(
-            { hostname: 'host.com', filePath: '/path', username: '', password: '' },
+            { hostname: 'host.com', filePath: '/path' },
             tmpDir
         );
 
         expect(result).toBeNull();
         expect(logError).toHaveBeenCalledWith(
-            expect.stringContaining('WebDAV username and password are required')
+            expect.stringContaining('Realm is required for WebDAV authentication')
         );
     });
 
     it('downloads file and returns path on success', async () => {
+        axios.post.mockResolvedValue({ data: { access_token: 'mock-token' } });
         const mockData = {
             pipe: vi.fn((writer) => {
                 writer.write('file content');
@@ -237,13 +240,10 @@ describe('downloadWebdavFile', () => {
         });
 
         const result = await downloadWebdavFile(
-            {
-                hostname: 'host.com',
-                filePath: '/webdav/test.xml',
-                username: 'user',
-                password: 'pass'
-            },
-            tmpDir
+            { hostname: 'host.com', filePath: '/webdav/test.xml' },
+            tmpDir,
+            null,
+            'EU05'
         );
 
         expect(result).toContain('test.xml');
@@ -252,6 +252,7 @@ describe('downloadWebdavFile', () => {
     });
 
     it('uses custom output filename when provided', async () => {
+        axios.post.mockResolvedValue({ data: { access_token: 'mock-token' } });
         const mockData = {
             pipe: vi.fn((writer) => {
                 writer.write('file content');
@@ -263,20 +264,17 @@ describe('downloadWebdavFile', () => {
         });
 
         const result = await downloadWebdavFile(
-            {
-                hostname: 'host.com',
-                filePath: '/webdav/original.xml',
-                username: 'user',
-                password: 'pass'
-            },
+            { hostname: 'host.com', filePath: '/webdav/original.xml' },
             tmpDir,
-            'custom_name.xml'
+            'custom_name.xml',
+            'EU05'
         );
 
         expect(result).toContain('custom_name.xml');
     });
 
     it('returns null when downloaded file is empty', async () => {
+        axios.post.mockResolvedValue({ data: { access_token: 'mock-token' } });
         const mockData = {
             pipe: vi.fn((writer) => {
                 // Write nothing — create empty file
@@ -288,13 +286,10 @@ describe('downloadWebdavFile', () => {
         });
 
         const result = await downloadWebdavFile(
-            {
-                hostname: 'host.com',
-                filePath: '/webdav/empty.xml',
-                username: 'user',
-                password: 'pass'
-            },
-            tmpDir
+            { hostname: 'host.com', filePath: '/webdav/empty.xml' },
+            tmpDir,
+            null,
+            'EU05'
         );
 
         expect(result).toBeNull();

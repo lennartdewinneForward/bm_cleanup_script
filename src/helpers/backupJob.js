@@ -202,10 +202,6 @@ export async function refreshMetadataBackupForRealm(realm, _instanceType, option
         return { ok: false, reason: configError.message };
     }
 
-    if (!webdavConfig.username || !webdavConfig.password) {
-        return { ok: false, reason: 'Missing WebDAV credentials in config.json' };
-    }
-
     const realmIdentifier = webdavConfig.name || webdavConfig.hostname;
     const targetFileName = buildMetadataBackupFileName(realmIdentifier);
     const archiveDir = path.join(backupConfig.outputDir, 'archive');
@@ -231,7 +227,7 @@ export async function refreshMetadataBackupForRealm(realm, _instanceType, option
 
             // --- 1. Try downloading the existing file first ---
             const existingPath = await downloadWebdavFile(
-                webdavConfig, backupConfig.outputDir, targetFileName
+                webdavConfig, backupConfig.outputDir, targetFileName, realm
             );
 
             if (existingPath) {
@@ -313,7 +309,7 @@ export async function refreshMetadataBackupForRealm(realm, _instanceType, option
 
         // --- 4. Download after job completed ---
         const downloadedPath = await downloadWebdavFile(
-            webdavConfig, backupConfig.outputDir, targetFileName
+            webdavConfig, backupConfig.outputDir, targetFileName, realm
         );
 
         if (!downloadedPath) {

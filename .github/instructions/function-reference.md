@@ -91,7 +91,7 @@ This document provides detailed explanations of all script functions, what they 
 4. Optionally fetch detailed definitions with defaults
 5. Return complete list
 
-**Data Flow:** Attribute definitions feed into buildPreferenceMeta() for metadata enrichment and used by summarize-preferences command.
+**Data Flow:** Attribute definitions feed into buildMeta() for metadata enrichment and used by summarize-preferences command.
 
 **Returns:** Array of attribute definition objects with id, display_name, value_type, default_value, field_length
 
@@ -275,7 +275,7 @@ await exportSitesCartridgesToCSV("bcwr-080")
 
 ## Data Processing Functions
 
-### buildPreferenceMeta(preferenceDefinitions)
+### buildMeta(preferenceDefinitions)
 **Purpose:** Converts OCAPI attribute definitions into a normalized metadata lookup map.
 
 **Key Details:**
@@ -305,7 +305,7 @@ await exportSitesCartridgesToCSV("bcwr-080")
 - `groupSummaries` - Array of attribute group summaries
 - `realm` - Realm name (config resolved internally)
 - `answers` - User prompt answers object
-- `preferenceMeta` - Preference metadata map from `buildPreferenceMeta()`
+- `preferenceMeta` - Preference metadata map from `buildMeta()`
 - `progressCallback` (optional) - Callback for progress updates
 - `progressInfo` (optional) - Progress display callback info
 
@@ -322,13 +322,13 @@ await exportSitesCartridgesToCSV("bcwr-080")
 5. Build usage rows with site, group, preference, and value data
 6. Accumulate site summaries with group-level value collections
 
-**Data Flow:** Usage rows feed into writeUsageCSV() for detailed CSV, and into buildPreferenceMatrix() for the matrix view.
+**Data Flow:** Usage rows feed into writeUsageCSV() for detailed CSV, and into buildAttributeMatrices() for the matrix view.
 
 **Returns:** Object with usageRows (array of usage records) and siteSummaries (array of site-level summaries)
 
 ---
 
-### buildPreferenceMatrix(allPrefIds, allSiteIds, usageRows, preferenceMeta)
+### buildAttributeMatrix(allPrefIds, allSiteIds, usageRows, preferenceMeta)
 **Purpose:** Creates 2D boolean matrix showing which preferences are used on which sites.
 
 **Location:** `src/helpers/summarize.js`
@@ -553,5 +553,5 @@ await exportSitesCartridgesToCSV("bcwr-080")
 
 ## Data Summaries
 
-### buildPreferenceMatrix
-See [buildPreferenceMatrix](#buildpreferencematrixallprefids-allsiteids-usagerows-preferencemeta) in Data Processing Functions above.
+### buildAttributeMatrix
+See [buildAttributeMatrix](#buildAttributeMatricesallprefids-allsiteids-usagerows-preferencemeta) in Data Processing Functions above.

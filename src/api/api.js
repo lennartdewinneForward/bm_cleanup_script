@@ -291,20 +291,21 @@ export async function getJobExecutionStatus(jobId, executionId, realm, ocapiVers
 }
 
 /**
- * Download file from WebDAV
+ * Download file from WebDAV using OAuth Bearer token authentication
  * @param {Object} webdavConfig - WebDAV config
  * @param {string} outputDir - Local output directory
  * @param {string} [outputFileName] - Override the downloaded file name (avoids collisions in parallel)
+ * @param {string} [realm] - Realm name used to obtain an OAuth Bearer token
  * @returns {Promise<string|null>} Local file path
  */
-export async function downloadWebdavFile(webdavConfig, outputDir, outputFileName = null) {
+export async function downloadWebdavFile(webdavConfig, outputDir, outputFileName = null, realm = null) {
     try {
-        const { hostname, username, password, filePath } = webdavConfig;
+        const { hostname, filePath } = webdavConfig;
         if (!hostname || !filePath) {
             throw new Error('WebDAV hostname and file path are required');
         }
-        if (!username || !password) {
-            throw new Error('WebDAV username and password are required');
+        if (!realm) {
+            throw new Error('Realm is required for WebDAV authentication');
         }
 
         const url = `https://${hostname}${filePath}`;
@@ -313,8 +314,11 @@ export async function downloadWebdavFile(webdavConfig, outputDir, outputFileName
 
         await fsPromises.mkdir(outputDir, { recursive: true });
 
+        const sandbox = getSandboxConfig(realm);
+        const token = await getOAuthToken(sandbox);
+
         const response = await axios.get(url, {
-            auth: { username, password },
+            headers: { 'Authorization': `Bearer ${token}` },
             responseType: 'stream',
             validateStatus: (status) => status >= 200 && status < 300
         });

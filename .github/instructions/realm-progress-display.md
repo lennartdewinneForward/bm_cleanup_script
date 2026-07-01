@@ -597,7 +597,7 @@ for (const realm of selectedRealms) {
   display.completeStep(hostname, realmName, "fetch");
   
   display.startStep(hostname, realmName, "build", "Building Matrices");
-  const matrices = await buildPreferenceMatrices(prefs);
+  const matrices = await buildAttributeMatrices(prefs);
   display.completeStep(hostname, realmName, "build");
   
   display.startStep(hostname, realmName, "scan", "Scanning Code");

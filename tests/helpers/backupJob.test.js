@@ -170,20 +170,6 @@ describe('refreshMetadataBackupForRealm', () => {
         expect(result.reason).toContain('Config not found');
     });
 
-    it('returns error when WebDAV credentials are missing', async () => {
-        getWebdavConfig.mockReturnValue({
-            hostname: 'host',
-            name: 'EU05',
-            username: '',
-            password: ''
-        });
-
-        const result = await refreshMetadataBackupForRealm('EU05', 'development');
-
-        expect(result.ok).toBe(false);
-        expect(result.reason).toContain('Missing WebDAV credentials');
-    });
-
     it('returns existing file when download succeeds on first try', async () => {
         const date = new Date().toISOString().slice(0, 10);
         const expectedFile = path.join(tmpDir, `EU05_meta_data_backup_${date}.xml`);

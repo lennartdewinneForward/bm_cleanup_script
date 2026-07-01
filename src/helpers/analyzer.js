@@ -20,9 +20,9 @@ import {
     getSitePreferences
 } from '../api/api.js';
 import {
-    buildPreferenceMeta,
+    buildMeta,
     processSitesAndGroups,
-    buildPreferenceMatrix
+    buildAttributeMatrix
 } from './summarize.js';
 import { writeUsageCSV, writeMatrixCSV } from '../io/csv.js';
 import { buildGroupSummaries, filterSitesByScope } from '../io/util.js';
@@ -181,6 +181,7 @@ async function fetchPreferenceData(params, progressInfo) {
     return { preferenceDefinitions, groups, groupSummaries, sites };
 }
 
+//TODO: make Generic
 /**
  * Fetch preference data from a metadata XML file instead of OCAPI.
  * Replaces the paginated attribute list endpoint, individual default-value
@@ -192,9 +193,9 @@ async function fetchPreferenceData(params, progressInfo) {
  * @param {string} params.objectType - Object type (e.g., 'SitePreferences')
  * @param {string} params.realm - Realm name (for OCAPI site fetching)
  * @param {Object} [progressInfo] - Progress tracking info
- * @returns {Promise<Object>} { preferenceDefinitions, groups, groupSummaries, sites }
+ * @returns {Promise<Object>} { attributeDefinitions, groups, groupSummaries, sites }
  */
-async function fetchPreferenceDataFromMetadata(params, progressInfo) {
+async function fetchAttributeDataFromMetadata(params, progressInfo) {
     const display = progressInfo?.display;
     const hostname = progressInfo?.hostname;
     const realmName = progressInfo?.realmName;
@@ -206,16 +207,16 @@ async function fetchPreferenceDataFromMetadata(params, progressInfo) {
         console.log('\nReading attribute definitions from metadata XML...');
     }
 
-    const preferenceDefinitions = await getAllAttributeDefinitionsFromMetadata(
+    const attributeDefinitions = await getAllAttributeDefinitionsFromMetadata(
         params.metadataFilePath, params.objectType
     );
 
     if (!display) {
         console.log(
-            `${LOG_PREFIX.INFO} Loaded ${preferenceDefinitions.length}`
+            `${LOG_PREFIX.INFO} Loaded ${attributeDefinitions.length}`
             + ' attribute definition(s) from metadata XML'
         );
-        const defsWithDefault = preferenceDefinitions.filter(d => d.default_value != null).length;
+        const defsWithDefault = attributeDefinitions.filter(d => d.default_value != null).length;
         console.log(
             `${LOG_PREFIX.INFO} ${defsWithDefault} definition(s) include a default value`
         );
@@ -260,7 +261,7 @@ async function fetchPreferenceDataFromMetadata(params, progressInfo) {
         display && hostname ? { display, hostname, stepKey: 'groups' } : null
     );
 
-    return { preferenceDefinitions, groups, groupSummaries, sites };
+    return { attributeDefinitions, groups, groupSummaries, sites };
 }
 
 /**
@@ -283,19 +284,20 @@ function validateAndFilterSites(sites, scope, siteId) {
     return sitesToProcess;
 }
 
+//TODO: make Generic
 /**
- * Process site data and build preference matrices
- * @param {Object} data - Data object containing sites, preferences, groups
+ * Process site data and build attribute matrices
+ * @param {Object} data - Data object containing sites, attributes, groups
  * @param {string} realm - Realm name
  * @param {Object} params - Parameters object
  * @param {Object} [progressInfo] - Progress tracking info
  * @param {RealmProgressDisplay} [progressInfo.display] - Progress display instance
  * @param {string} [progressInfo.hostname] - Realm hostname for progress tracking
  * @param {string} [progressInfo.realmName] - Realm display name
- * @returns {Promise<Object>} Object with usageRows, allSiteIds, preferenceMatrix
+ * @returns {Promise<Object>} Object with usageRows, allSiteIds, attributeMatrix
  * @private
  */
-async function buildPreferenceMatrices(data, realm, params, progressInfo) {
+async function buildAttributeMatrices(data, realm, params, progressInfo) {
     const display = progressInfo?.display;
     const hostname = progressInfo?.hostname;
     const realmName = progressInfo?.realmName;
@@ -306,7 +308,7 @@ async function buildPreferenceMatrices(data, realm, params, progressInfo) {
         console.log(`\nProcessing ${data.sitesToProcess.length} site(s)...`);
     }
 
-    const preferenceMeta = buildPreferenceMeta(data.preferenceDefinitions);
+    const attributeMeta = buildMeta(data.attributeDefinitions);
 
     // Create progress callback for site processing (0-80% of matrices step)
     const siteProgressCallback = (currentSite, totalSites) => {
@@ -325,7 +327,7 @@ async function buildPreferenceMatrices(data, realm, params, progressInfo) {
         data.groupSummaries,
         realm,
         params,
-        preferenceMeta,
+        attributeMeta,
         siteProgressCallback,
         matricesProgressInfo
     );
@@ -339,19 +341,19 @@ async function buildPreferenceMatrices(data, realm, params, progressInfo) {
         .filter(Boolean)
         .sort();
 
-    const allPrefIds = Object.keys(preferenceMeta).sort();
-    const preferenceMatrix = buildPreferenceMatrix(
-        allPrefIds,
+    const allAttrIds = Object.keys(attributeMeta).sort();
+    const attributeMatrix = buildAttributeMatrix(
+        allAttrIds,
         allSiteIds,
         processedRows,
-        preferenceMeta
+        attributeMeta
     );
 
     if (display && hostname) {
         display.completeStep(hostname, 'matrices');
     }
 
-    return { usageRows: processedRows, allSiteIds, preferenceMatrix, preferenceMeta };
+    return { usageRows: processedRows, allSiteIds, attributeMatrix, attributeMeta };
 }
 
 /**
@@ -442,7 +444,7 @@ export async function executePreferenceSummarization(params, progressInfo) {
         sitesToProcess
     };
 
-    const results = await buildPreferenceMatrices(processData, params.realm, params, progressInfo);
+    const results = await buildAttributeMatrices(processData, params.realm, params, progressInfo);
     await exportResults(
         realmDir,
         params.realm,
@@ -474,16 +476,16 @@ export async function executePreferenceSummarization(params, progressInfo) {
  * @param {Object} [progressInfo] - Progress tracking info
  * @returns {Promise<Object>} Object with realmDir and success flag
  */
-export async function executePreferenceSummarizationFromMetadata(params, progressInfo) {
+export async function executeSummarizationFromMetadata(params, progressInfo) {
     if (!progressInfo?.display) {
-        logStatusUpdate(`Processing preferences for ${params.realm} (metadata mode)`);
+        logStatusUpdate(`Processing ${params.objectType} for ${params.realm} (metadata mode)`);
     }
 
     const realmDir = ensureResultsDir(params.realm);
 
     let metadataData;
     try {
-        metadataData = await fetchPreferenceDataFromMetadata(params, progressInfo);
+        metadataData = await fetchAttributeDataFromMetadata(params, progressInfo);
     } catch (metadataError) {
         // Throw error with context for caller to handle fallback
         const error = new Error(
@@ -510,7 +512,7 @@ export async function executePreferenceSummarizationFromMetadata(params, progres
         sitesToProcess
     };
 
-    const results = await buildPreferenceMatrices(processData, params.realm, params, progressInfo);
+    const results = await buildAttributeMatrices(processData, params.realm, params, progressInfo);
     await exportResults(
         realmDir,
         params.realm,

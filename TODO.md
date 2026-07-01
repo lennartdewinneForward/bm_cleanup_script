@@ -79,12 +79,12 @@ API calls are mocked — tests verify function output shapes, content, and edge 
 
 - [ ] `normalizeId` — strips `c_` prefix, leaves non-prefixed IDs unchanged
 - [ ] `isValueKey` — filters metadata keys (`_v`, `_type`, `link`, `site`)
-- [ ] `buildPreferenceMeta` — produces correct metadata map from OCAPI definitions (id, type, defaultValue, group, description)
-- [ ] `buildPreferenceMeta` — handles missing fields gracefully (partial definitions)
-- [ ] `buildPreferenceMeta` — extracts default values from string, number, boolean, and object formats
-- [ ] `buildPreferenceMatrix` — marks correct sites as `true` based on usage rows
-- [ ] `buildPreferenceMatrix` — preferences with no usage rows have all sites `false`
-- [ ] `buildPreferenceMatrix` — includes defaultValue from preferenceMeta
+- [ ] `buildMeta` — produces correct metadata map from OCAPI definitions (id, type, defaultValue, group, description)
+- [ ] `buildMeta` — handles missing fields gracefully (partial definitions)
+- [ ] `buildMeta` — extracts default values from string, number, boolean, and object formats
+- [ ] `buildAttributeMatrix` — marks correct sites as `true` based on usage rows
+- [ ] `buildAttributeMatrix` — preferences with no usage rows have all sites `false`
+- [ ] `buildAttributeMatrix` — includes defaultValue from preferenceMeta
 - [ ] `processSitesAndGroups` — aggregates usage rows across multiple sites and groups (mock API)
 
 ### csv.js

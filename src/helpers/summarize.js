@@ -77,11 +77,11 @@ function extractMeaningfulValue(val) {
 /**
  * Build normalized preference metadata map from OCAPI attribute definitions
  * See .github/instructions/function-reference.md for detailed documentation
- * @param {Array} preferenceDefinitions - Array of OCAPI attribute definition objects
- * @returns {Object} Map of preference metadata keyed by preference ID
+ * @param {Array} attributeDefinitions - Array of OCAPI attribute definition objects
+ * @returns {Object} Map of preference metadata keyed by attribute ID
  */
-export function buildPreferenceMeta(preferenceDefinitions) {
-    return preferenceDefinitions.reduce((acc, def) => {
+export function buildMeta(attributeDefinitions) {
+    return attributeDefinitions.reduce((acc, def) => {
         const id = def.id || def.attribute_id || def.attributeId;
         const defaultValue = extractDefaultValue(def);
 
@@ -201,7 +201,7 @@ export async function processSitesAndGroups(
 
         console.log(`  - Groups fetched in ${groupTimer.stop()}`);
 
-        // Process fetched group data to extract preference values
+        // Process fetched group data to extract attribute values
         const siteRows = buildSiteUsageRows(siteId, cartridges, groupSummaries, groupResponses, preferenceMeta);
         usageRows.push(...siteRows);
 
@@ -212,7 +212,7 @@ export async function processSitesAndGroups(
             values: groupResponses[i]
         }));
 
-        console.log(`  ✓ Site ${siteId} complete (${siteRows.length} preferences found)`);
+        console.log(`  ✓ Site ${siteId} complete (${siteRows.length} attributes found)`);
         siteSummaries.push({ siteId, cartridges, groups: groupValues });
     }
 
@@ -226,45 +226,45 @@ export async function processSitesAndGroups(
 
 
 // ============================================================================
-// PREFERENCE MATRIX GENERATION
-// Create cross-reference matrix of all preferences across all sites
+// ATTRIBUTE MATRIX GENERATION
+// Create cross-reference matrix of all attributes across all sites
 // ============================================================================
 
 /**
- * Build boolean matrix showing which preferences are used on which sites
+ * Build boolean matrix showing which attributes are used on which sites
  * See .github/instructions/function-reference.md for detailed documentation
- * @param {Array<string>} allPrefIds - Complete list of all preference IDs
+ * @param {Array<string>} allAttrIds - Complete list of all attribute IDs
  * @param {Array<string>} allSiteIds - Complete list of all site IDs
  * @param {Array} usageRows - Usage rows containing actual values
- * @param {Object} preferenceMeta - Preference metadata including default values
- * @returns {Array} Array of preference matrix objects with sites mapping
+ * @param {Object} attributeMeta - Attribute metadata including default values
+ * @returns {Array} Array of attribute matrix objects with sites mapping
  */
-export function buildPreferenceMatrix(
-    allPrefIds,
+export function buildAttributeMatrix(
+    allAttrIds,
     allSiteIds,
     usageRows,
-    preferenceMeta
+    attributeMeta
 ) {
-    // Initialize matrix with all preferences having false for all sites
-    const preferenceMatrix = allPrefIds.map(prefId => {
+    // Initialize matrix with all attributes having false for all sites
+    const attributeMatrix = allAttrIds.map(attrId => {
         const siteValues = {};
         for (const siteId of allSiteIds) {
             siteValues[siteId] = false;
         }
         return {
-            preferenceId: prefId,
-            defaultValue: preferenceMeta[prefId]?.defaultValue || '',
+            preferenceId: attrId,
+            defaultValue: attributeMeta[attrId]?.defaultValue || '',
             sites: siteValues
         };
     });
 
-    // Mark hasValue=true for preferences that have explicit values
+    // Mark hasValue=true for attributes that have explicit values
     for (const row of usageRows) {
-        const prefEntry = preferenceMatrix.find(p => p.preferenceId === row.preferenceId);
-        if (prefEntry) {
-            prefEntry.sites[row.siteId] = true;
+        const attrEntry = attributeMatrix.find(p => p.preferenceId === row.preferenceId);
+        if (attrEntry) {
+            attrEntry.sites[row.siteId] = true;
         }
     }
 
-    return preferenceMatrix;
+    return attributeMatrix;
 }

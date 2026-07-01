@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
     normalizeId,
     isValueKey,
-    buildPreferenceMeta,
-    buildPreferenceMatrix,
+    buildMeta,
+    buildAttributeMatrix,
     processSitesAndGroups
 } from '../../src/helpers/summarize.js';
 
@@ -70,10 +70,10 @@ describe('isValueKey', () => {
 });
 
 // ============================================================================
-// buildPreferenceMeta
+// buildMeta
 // ============================================================================
 
-describe('buildPreferenceMeta', () => {
+describe('buildMeta', () => {
     it('produces correct metadata map from full OCAPI definitions', () => {
         const definitions = [
             {
@@ -92,7 +92,7 @@ describe('buildPreferenceMeta', () => {
             }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
 
         expect(meta).toHaveProperty('enableSearch');
         expect(meta.enableSearch).toEqual({
@@ -117,7 +117,7 @@ describe('buildPreferenceMeta', () => {
             { id: 'orphanPref' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
 
         expect(meta.orphanPref).toEqual({
             id: 'orphanPref',
@@ -137,7 +137,7 @@ describe('buildPreferenceMeta', () => {
             }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.colorPref.defaultValue).toBe('red');
     });
 
@@ -146,7 +146,7 @@ describe('buildPreferenceMeta', () => {
             { attribute_id: 'fallbackId', value_type: 'string' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta).toHaveProperty('fallbackId');
         expect(meta.fallbackId.id).toBe('fallbackId');
     });
@@ -157,21 +157,21 @@ describe('buildPreferenceMeta', () => {
             { id: 'objectPlaceholder', default_value: '[object Object]' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.placeholderPref.defaultValue).toBeNull();
         expect(meta.objectPlaceholder.defaultValue).toBeNull();
     });
 
     it('returns empty map for empty input', () => {
-        expect(buildPreferenceMeta([])).toEqual({});
+        expect(buildMeta([])).toEqual({});
     });
 });
 
 // ============================================================================
-// buildPreferenceMatrix
+// buildAttributeMatrix
 // ============================================================================
 
-describe('buildPreferenceMatrix', () => {
+describe('buildAttributeMatrix', () => {
     const allPrefIds = ['prefA', 'prefB', 'prefC'];
     const allSiteIds = ['site1', 'site2'];
     const preferenceMeta = {
@@ -187,7 +187,7 @@ describe('buildPreferenceMatrix', () => {
             { preferenceId: 'prefB', siteId: 'site2', hasValue: true }
         ];
 
-        const matrix = buildPreferenceMatrix(allPrefIds, allSiteIds, usageRows, preferenceMeta);
+        const matrix = buildAttributeMatrix(allPrefIds, allSiteIds, usageRows, preferenceMeta);
 
         expect(matrix[0].preferenceId).toBe('prefA');
         expect(matrix[0].sites.site1).toBe(true);
@@ -199,7 +199,7 @@ describe('buildPreferenceMatrix', () => {
     });
 
     it('preferences with no usage rows have all sites false', () => {
-        const matrix = buildPreferenceMatrix(allPrefIds, allSiteIds, [], preferenceMeta);
+        const matrix = buildAttributeMatrix(allPrefIds, allSiteIds, [], preferenceMeta);
 
         for (const pref of matrix) {
             for (const siteId of allSiteIds) {
@@ -209,7 +209,7 @@ describe('buildPreferenceMatrix', () => {
     });
 
     it('includes defaultValue from preferenceMeta', () => {
-        const matrix = buildPreferenceMatrix(allPrefIds, allSiteIds, [], preferenceMeta);
+        const matrix = buildAttributeMatrix(allPrefIds, allSiteIds, [], preferenceMeta);
 
         expect(matrix[0].defaultValue).toBe('yes');
         expect(matrix[1].defaultValue).toBe('');
@@ -217,7 +217,7 @@ describe('buildPreferenceMatrix', () => {
     });
 
     it('returns one entry per preference ID', () => {
-        const matrix = buildPreferenceMatrix(allPrefIds, allSiteIds, [], preferenceMeta);
+        const matrix = buildAttributeMatrix(allPrefIds, allSiteIds, [], preferenceMeta);
         expect(matrix).toHaveLength(3);
         expect(matrix.map(m => m.preferenceId)).toEqual(['prefA', 'prefB', 'prefC']);
     });
@@ -227,7 +227,7 @@ describe('buildPreferenceMatrix', () => {
             { preferenceId: 'unknownPref', siteId: 'site1', hasValue: true }
         ];
 
-        const matrix = buildPreferenceMatrix(allPrefIds, allSiteIds, usageRows, preferenceMeta);
+        const matrix = buildAttributeMatrix(allPrefIds, allSiteIds, usageRows, preferenceMeta);
 
         // All preferences should remain false for all sites
         for (const pref of matrix) {
@@ -241,7 +241,7 @@ describe('buildPreferenceMatrix', () => {
         const ids = ['prefX'];
         const meta = {}; // no meta for prefX
 
-        const matrix = buildPreferenceMatrix(ids, ['site1'], [], meta);
+        const matrix = buildAttributeMatrix(ids, ['site1'], [], meta);
 
         expect(matrix[0].defaultValue).toBe('');
     });
@@ -254,7 +254,7 @@ describe('buildPreferenceMatrix', () => {
             { preferenceId: 'prefA', siteId: 'site3', hasValue: true }
         ];
 
-        const matrix = buildPreferenceMatrix(ids, sites, usageRows, preferenceMeta);
+        const matrix = buildAttributeMatrix(ids, sites, usageRows, preferenceMeta);
 
         expect(matrix[0].sites.site1).toBe(true);
         expect(matrix[0].sites.site2).toBe(false);
@@ -262,7 +262,7 @@ describe('buildPreferenceMatrix', () => {
     });
 
     it('handles empty site list', () => {
-        const matrix = buildPreferenceMatrix(['prefA'], [], [], preferenceMeta);
+        const matrix = buildAttributeMatrix(['prefA'], [], [], preferenceMeta);
 
         expect(matrix).toHaveLength(1);
         expect(matrix[0].sites).toEqual({});
@@ -270,16 +270,16 @@ describe('buildPreferenceMatrix', () => {
 });
 
 // ============================================================================
-// buildPreferenceMeta – extended edge cases
+// buildMeta – extended edge cases
 // ============================================================================
 
-describe('buildPreferenceMeta – edge cases', () => {
+describe('buildMeta – edge cases', () => {
     it('extracts default from object with id property (enum-type)', () => {
         const definitions = [
             { id: 'enumPref', default_value: { id: 'optionA' } }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.enumPref.defaultValue).toBe('optionA');
     });
 
@@ -288,7 +288,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'boolPref', default_value: false }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.boolPref.defaultValue).toBe('false');
     });
 
@@ -297,7 +297,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'zeroPref', default_value: 0 }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.zeroPref.defaultValue).toBe('0');
     });
 
@@ -306,7 +306,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'fallbackDefault', default: 'fallbackValue' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.fallbackDefault.defaultValue).toBe('fallbackValue');
     });
 
@@ -315,7 +315,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'bothDefaults', default_value: 'primary', default: 'secondary' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.bothDefaults.defaultValue).toBe('primary');
     });
 
@@ -324,7 +324,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'oavd', default_value: 'object_attribute_value_definition' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.oavd.defaultValue).toBeNull();
     });
 
@@ -334,7 +334,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'mixed', default_value: '[Object Object]' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.upper.defaultValue).toBeNull();
         expect(meta.mixed.defaultValue).toBeNull();
     });
@@ -344,7 +344,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'customObj', default_value: { someKey: 'someValue' } }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.customObj.defaultValue).toBe('someValue');
     });
 
@@ -353,7 +353,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'metaOnly', default_value: { _type: 'string', _resource_state: 'active' } }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.metaOnly.defaultValue).toBeNull();
     });
 
@@ -362,7 +362,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'typeFallback', type: 'set_of_string' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.typeFallback.type).toBe('set_of_string');
     });
 
@@ -371,7 +371,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'nameFallback', name: 'My Pref Name' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.nameFallback.description).toBe('My Pref Name');
     });
 
@@ -380,7 +380,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'groupFallback', groupId: 'MyGroup' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.groupFallback.group).toBe('MyGroup');
     });
 
@@ -389,7 +389,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { attributeId: 'camelId', value_type: 'int' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta).toHaveProperty('camelId');
         expect(meta.camelId.id).toBe('camelId');
     });
@@ -403,7 +403,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'pref5' }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
 
         expect(Object.keys(meta)).toHaveLength(5);
         expect(meta.pref1.defaultValue).toBe('v1');
@@ -418,7 +418,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'nullObj', default_value: { value: null } }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.nullObj.defaultValue).toBeNull();
     });
 
@@ -427,7 +427,7 @@ describe('buildPreferenceMeta – edge cases', () => {
             { id: 'nullDirect', default_value: null }
         ];
 
-        const meta = buildPreferenceMeta(definitions);
+        const meta = buildMeta(definitions);
         expect(meta.nullDirect.defaultValue).toBeNull();
     });
 });

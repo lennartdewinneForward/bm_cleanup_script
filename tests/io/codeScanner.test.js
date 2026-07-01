@@ -76,6 +76,13 @@ describe('isPreferenceAccessMatch', () => {
         expect(isPreferenceAccessMatch('prefs.custom[ "enableSearch" ]', 'enableSearch')).toBe(true);
     });
 
+    it('matches SFCC query syntax (custom.PrefId without leading dot)', () => {
+        expect(isPreferenceAccessMatch(
+            'shippingStatus = {0} AND custom.amazonCaptureStatus= {1}',
+            'amazonCaptureStatus'
+        )).toBe(true);
+    });
+
     // Negative matches — should return false
     it('rejects bare word in plain text', () => {
         expect(isPreferenceAccessMatch('enableSearch is used here', 'enableSearch')).toBe(false);
@@ -95,6 +102,27 @@ describe('isPreferenceAccessMatch', () => {
 
     it('rejects comment mentioning preference name without quotes', () => {
         expect(isPreferenceAccessMatch('// enable search feature via enableSearch', 'enableSearch')).toBe(false);
+    });
+
+    // OCAPI c_ prefix matches — should return true
+    it('matches OCAPI c_ prefixed string literal (double quotes)', () => {
+        expect(isPreferenceAccessMatch('const val = order["c_enableSearch"]', 'enableSearch')).toBe(true);
+    });
+
+    it('matches OCAPI c_ prefixed string literal (single quotes)', () => {
+        expect(isPreferenceAccessMatch("const val = order['c_enableSearch']", 'enableSearch')).toBe(true);
+    });
+
+    it('matches OCAPI c_ prefixed dot property access', () => {
+        expect(isPreferenceAccessMatch('const val = order.c_enableSearch', 'enableSearch')).toBe(true);
+    });
+
+    it('matches OCAPI c_ prefixed bracket access', () => {
+        expect(isPreferenceAccessMatch('order["c_enableSearch"]', 'enableSearch')).toBe(true);
+    });
+
+    it('matches c_ prefix in JSON key', () => {
+        expect(isPreferenceAccessMatch('{"c_enableSearch": true}', 'enableSearch')).toBe(true);
     });
 });
 
