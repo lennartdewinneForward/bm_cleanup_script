@@ -379,8 +379,8 @@ async function exportResults(realmDir, realm, results, instanceType, _objectType
         display.startStep(hostname, realmName, 'export', 'Exporting Results');
     }
 
-    const usageFilePath = writeUsageCSV(realmDir, realm, instanceType, results.usageRows, results.preferenceMeta);
-    writeMatrixCSV(realmDir, realm, instanceType, results.preferenceMatrix, results.allSiteIds);
+    const usageFilePath = writeUsageCSV(realmDir, realm, instanceType, results.usageRows, results.attributeMeta);
+    writeMatrixCSV(realmDir, realm, instanceType, results.attributeMatrix, results.allSiteIds);
 
     if (display && hostname) {
         display.setStepProgress(hostname, 'export', 60);
