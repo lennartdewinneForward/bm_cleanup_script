@@ -52,7 +52,9 @@ export {
     consolidationFailurePrompt,
     confirmCommitPrompt,
     commitMessagePrompt,
-    debugBatchContinuePrompt
+    debugBatchContinuePrompt,
+    typeIdPrompt,
+    attributeSelectionPrompt
 } from './metaPrompts.js';
 
 export {
@@ -60,3 +62,8 @@ export {
     confirmDryRunMovePrompt,
     selectCustomObjectTypesPrompt
 } from './customObjectPrompts.js';
+
+export {
+    selectTypeIdsPrompt,
+    processTypeIdSelection
+} from './customAttributesPrompts.js';

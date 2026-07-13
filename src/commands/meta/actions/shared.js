@@ -39,9 +39,10 @@ export async function promptForRepositoryPath() {
  * @param {string} params.instanceType - Instance type
  * @param {string} params.maxTier - Maximum deletion tier
  * @param {boolean} params.useCrossRealm - Whether to use cross-realm intersection
+ * @param {string} [params.objectType] - Object type for non-SitePreferences (e.g. 'Order')
  * @returns {{ realmPreferenceMap: Map, selectedPreferenceIds: string[], totalPrefs: number }}
  */
-export function loadDeletionCandidates({ realmList, instanceType, maxTier, useCrossRealm }) {
+export function loadDeletionCandidates({ realmList, instanceType, maxTier, useCrossRealm, objectType }) {
     console.log(`  Loading deletion candidates up to tier ${maxTier}...`);
     const {
         realmPreferenceMap,
@@ -51,7 +52,7 @@ export function loadDeletionCandidates({ realmList, instanceType, maxTier, useCr
         filteredOutRealms
     } = useCrossRealm
         ? buildCrossRealmPreferenceMap(realmList, instanceType, { maxTier })
-        : buildRealmPreferenceMapFromFiles(realmList, instanceType, { maxTier });
+        : buildRealmPreferenceMapFromFiles(realmList, instanceType, { maxTier, objectType });
 
     let totalPrefs = 0;
     for (const [realm, prefs] of realmPreferenceMap) {

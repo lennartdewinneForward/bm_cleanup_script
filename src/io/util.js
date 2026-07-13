@@ -8,27 +8,33 @@ import { DIRECTORIES, IDENTIFIERS, FILE_PATTERNS } from '../config/constants.js'
  * Get the absolute path to the results directory
  * @param {string} [realm] - Optional realm name for subdirectory
  * @param {string} [instanceTypeOverride] - Optional instance type override
- * @returns {string} Absolute path to results or results/{instanceType}/{realm} directory
+ * @param {string} [typeId] - Optional type ID for custom attributes subdirectory
+ * @returns {string} Absolute path to results or results/{instanceType}/{realm}/{typeId} directory
  */
-export function getResultsPath(realm = null, instanceTypeOverride = null) {
+export function getResultsPath(realm = null, instanceTypeOverride = null, typeId = null) {
     const resultsDir = path.join(process.cwd(), DIRECTORIES.RESULTS);
     if (realm) {
         if (realm === IDENTIFIERS.ALL_REALMS) {
             if (instanceTypeOverride) {
-                return path.join(resultsDir, instanceTypeOverride, realm);
+                const realmPath = path.join(resultsDir, instanceTypeOverride, realm);
+                return typeId ? path.join(realmPath, typeId) : realmPath;
             }
-            return path.join(resultsDir, realm);
+            const realmPath = path.join(resultsDir, realm);
+            return typeId ? path.join(realmPath, typeId) : realmPath;
         }
 
         if (instanceTypeOverride) {
-            return path.join(resultsDir, instanceTypeOverride, realm);
+            const realmPath = path.join(resultsDir, instanceTypeOverride, realm);
+            return typeId ? path.join(realmPath, typeId) : realmPath;
         }
 
         try {
             const instanceType = getInstanceType(realm);
-            return path.join(resultsDir, instanceType, realm);
+            const realmPath = path.join(resultsDir, instanceType, realm);
+            return typeId ? path.join(realmPath, typeId) : realmPath;
         } catch {
-            return path.join(resultsDir, 'unknown', realm);
+            const realmPath = path.join(resultsDir, 'unknown', realm);
+            return typeId ? path.join(realmPath, typeId) : realmPath;
         }
     }
     return resultsDir;
@@ -38,10 +44,11 @@ export function getResultsPath(realm = null, instanceTypeOverride = null) {
  * Ensure results directory exists for a realm
  * @param {string} realm - Realm name
  * @param {string} [instanceTypeOverride] - Optional instance type override
+ * @param {string} [typeId] - Optional type ID for custom attributes subdirectory
  * @returns {string} Absolute path to the created directory
  */
-export function ensureResultsDir(realm, instanceTypeOverride = null) {
-    const dir = getResultsPath(realm, instanceTypeOverride);
+export function ensureResultsDir(realm, instanceTypeOverride = null, typeId = null) {
+    const dir = getResultsPath(realm, instanceTypeOverride, typeId);
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }

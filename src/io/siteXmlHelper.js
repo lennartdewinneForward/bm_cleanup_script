@@ -563,6 +563,41 @@ export async function findAttributeInMetaFiles(repoPath, attributeId) {
 }
 
 /**
+ * Extract all type-ids (type-extension type-id attributes) from a metadata backup XML
+ * Useful for discovering all object types defined in a metadata file
+ * @param {string} metadataFilePath - Path to meta_data_backup.xml
+ * @returns {Promise<Array<string>>} Array of type-id values (e.g., ["SitePreferences", "Order", "Basket"])
+ */
+export async function getAllTypeIdsFromMetadata(metadataFilePath) {
+    if (!fs.existsSync(metadataFilePath)) {
+        throw new Error(`Metadata file not found: ${metadataFilePath}`);
+    }
+
+    try {
+        const xmlContent = fs.readFileSync(metadataFilePath, 'utf-8');
+        const parsed = await parseXmlContent(xmlContent);
+        const metadata = parsed.metadata;
+
+        if (!metadata || !metadata['type-extension']) {
+            return [];
+        }
+
+        const typeExtensions = Array.isArray(metadata['type-extension'])
+            ? metadata['type-extension']
+            : [metadata['type-extension']];
+
+        const typeIds = typeExtensions
+            .map(ext => ext.$?.['type-id'])
+            .filter(id => id && typeof id === 'string')
+            .sort();
+
+        return typeIds;
+    } catch (error) {
+        throw new Error(`Failed to parse metadata file: ${error.message}`);
+    }
+}
+
+/**
  * Parse the SitePreferences type-extension from metadata XML and return
  * raw attribute definitions (xml2js objects). Shared by both the filtered
  * and unfiltered extraction functions.

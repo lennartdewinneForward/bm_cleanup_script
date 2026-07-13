@@ -124,6 +124,29 @@ describe('isPreferenceAccessMatch', () => {
     it('matches c_ prefix in JSON key', () => {
         expect(isPreferenceAccessMatch('{"c_enableSearch": true}', 'enableSearch')).toBe(true);
     });
+
+    // Custom variable dot access — handles destructured custom objects (e.g. orderCustom)
+    it('matches custom object variable dot access (orderCustom.attrId)', () => {
+        expect(isPreferenceAccessMatch(
+            'orderLine.push(getValue(orderCustom.amazonOrderReferenceID));',
+            'amazonOrderReferenceID'
+        )).toBe(true);
+    });
+
+    it('matches generic xyzCustom.attrId variable pattern', () => {
+        expect(isPreferenceAccessMatch('lineItemCustom.enableSearch', 'enableSearch')).toBe(true);
+    });
+
+    it('matches getCustom() method call dot access (.getCustom().attrId)', () => {
+        expect(isPreferenceAccessMatch(
+            'let val = order.getCustom().radialWalletType;',
+            'radialWalletType'
+        )).toBe(true);
+    });
+
+    it('rejects non-custom variable dot access (order.enableSearch)', () => {
+        expect(isPreferenceAccessMatch('order.enableSearch', 'enableSearch')).toBe(false);
+    });
 });
 
 // ============================================================================

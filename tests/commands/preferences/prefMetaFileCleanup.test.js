@@ -16,8 +16,7 @@ import {
     formatSitesScanResults
 } from '../../../src/commands/meta/helpers/metaFileCleanup.js';
 import {
-    findLatestMetadataFile,
-    parseSitePreferencesFromMetadata
+    findLatestMetadataFile
 } from '../../../src/io/codeScanner.js';
 
 // ============================================================================
@@ -38,8 +37,7 @@ vi.mock('../../../src/scripts/loggingScript/log.js', () => ({
 }));
 
 vi.mock('../../../src/io/codeScanner.js', () => ({
-    findLatestMetadataFile: vi.fn(() => null),
-    parseSitePreferencesFromMetadata: vi.fn(() => new Set())
+    findLatestMetadataFile: vi.fn(() => null)
 }));
 
 // ============================================================================
@@ -83,9 +81,32 @@ function buildMetaXml({ definitions = [], groupAssignments = [], groupId = 'Test
     return xml;
 }
 
+function buildBmBackupXml(attributeIds, typeId = 'SitePreferences') {
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + '<metadata xmlns="http://www.demandware.com/xml/impex/metadata/2006-10-31">\n'
+        + `    <type-extension type-id="${typeId}">\n`
+        + '        <custom-attribute-definitions>\n';
+    for (const id of attributeIds) {
+        xml += `            <attribute-definition attribute-id="${id}">\n`
+            + '                <type>string</type>\n'
+            + '            </attribute-definition>\n';
+    }
+    xml += '        </custom-attribute-definitions>\n'
+        + '    </type-extension>\n</metadata>\n';
+    return xml;
+}
+
 function writeMetaFile(dir, filename, content) {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, filename), content, 'utf-8');
+}
+
+function writeTempBmBackup(attributeIds, typeId = 'SitePreferences') {
+    const bmDir = path.join(tmpDir, '_bm_backups');
+    fs.mkdirSync(bmDir, { recursive: true });
+    const bmPath = path.join(bmDir, 'backup.xml');
+    fs.writeFileSync(bmPath, buildBmBackupXml(attributeIds, typeId), 'utf-8');
+    return bmPath;
 }
 
 beforeEach(() => {
@@ -297,10 +318,8 @@ describe('buildMetaCleanupPlan', () => {
         }));
 
         // BM backup for APAC does NOT contain the attribute
-        findLatestMetadataFile.mockImplementation(() => '/mock/backup.xml');
-        parseSitePreferencesFromMetadata.mockImplementation(
-            () => new Set(['someOtherPref', 'anotherPref'])
-        );
+        const bmPath = writeTempBmBackup(['someOtherPref', 'anotherPref']);
+        findLatestMetadataFile.mockImplementation(() => bmPath);
 
         const realmPrefMap = new Map([['EU05', ['c_realmOnlyPref']]]);
         const plan = buildMetaCleanupPlan(tmpDir, realmPrefMap, ['EU05', 'APAC']);
@@ -329,10 +348,8 @@ describe('buildMetaCleanupPlan', () => {
         }));
 
         // BM backup for APAC contains the attribute
-        findLatestMetadataFile.mockReturnValue('/mock/backup.xml');
-        parseSitePreferencesFromMetadata.mockReturnValue(
-            new Set(['sharedPref', 'otherPref'])
-        );
+        const bmPath = writeTempBmBackup(['sharedPref', 'otherPref']);
+        findLatestMetadataFile.mockReturnValue(bmPath);
 
         const realmPrefMap = new Map([['EU05', ['c_sharedPref']]]);
         const plan = buildMetaCleanupPlan(tmpDir, realmPrefMap, ['EU05', 'APAC']);

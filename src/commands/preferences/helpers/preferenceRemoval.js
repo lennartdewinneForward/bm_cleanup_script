@@ -91,6 +91,8 @@ function parseTieredPreferences(content, {
  * @param {string} instanceType - Instance type (sandbox, development, staging, production)
  * @param {Object} [options] - Optional filtering options
  * @param {string} [options.maxTier] - Maximum tier to include (cascading, e.g. 'P2' = P1+P2)
+ * @param {string} [options.objectType] - Object type for non-SitePreferences (e.g. 'Order', 'Product').
+ *   When set, loads from `{realm}_{objectType}_custom_attributes_for_deletion.txt`
  * @returns {{
  *   allowed: Array<{id: string, tier: string}> | null,
  *   blocked: string[],
@@ -99,9 +101,12 @@ function parseTieredPreferences(content, {
  *   totalInFile: number
  * } | null}
  */
-export function loadRealmPreferencesForDeletion(realm, instanceType, { maxTier } = {}) {
-    const resultsDir = ensureResultsDir(realm, instanceType);
-    const filePath = path.join(resultsDir, `${realm}${FILE_PATTERNS.PREFERENCES_FOR_DELETION}`);
+export function loadRealmPreferencesForDeletion(realm, instanceType, { maxTier, objectType } = {}) {
+    const resultsDir = ensureResultsDir(realm, instanceType, objectType);
+    const filename = objectType
+        ? `${realm}_${objectType}${FILE_PATTERNS.CUSTOM_ATTR_FOR_DELETION}`
+        : `${realm}${FILE_PATTERNS.PREFERENCES_FOR_DELETION}`;
+    const filePath = path.join(resultsDir, filename);
 
     if (!fs.existsSync(filePath)) {
         return null;
@@ -140,6 +145,7 @@ export function loadRealmPreferencesForDeletion(realm, instanceType, { maxTier }
  * @param {string} instanceType - Instance type
  * @param {Object} [options] - Optional filtering options
  * @param {string} [options.maxTier] - Maximum tier to include (cascading)
+ * @param {string} [options.objectType] - Object type for non-SitePreferences (e.g. 'Order')
  * @returns {{
  *   realmPreferenceMap: Map<string, string[]>,
  *   blockedByBlacklist: string[],
@@ -148,7 +154,7 @@ export function loadRealmPreferencesForDeletion(realm, instanceType, { maxTier }
  *   filteredOutRealms: string[]
  * }}
  */
-export function buildRealmPreferenceMapFromFiles(selectedRealms, instanceType, { maxTier } = {}) {
+export function buildRealmPreferenceMapFromFiles(selectedRealms, instanceType, { maxTier, objectType } = {}) {
     const realmPreferenceMap = new Map();
     const allBlocked = new Set();
     const allSkipped = new Set();
@@ -156,7 +162,7 @@ export function buildRealmPreferenceMapFromFiles(selectedRealms, instanceType, {
     const filteredOutRealms = [];
 
     for (const realm of selectedRealms) {
-        const result = loadRealmPreferencesForDeletion(realm, instanceType, { maxTier });
+        const result = loadRealmPreferencesForDeletion(realm, instanceType, { maxTier, objectType });
 
         if (!result) {
             realmPreferenceMap.set(realm, []);

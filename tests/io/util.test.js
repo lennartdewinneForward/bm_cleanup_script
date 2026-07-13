@@ -70,6 +70,22 @@ describe('getResultsPath', () => {
         const result = getResultsPath('UNKNOWN_REALM');
         expect(result).toBe(path.join(process.cwd(), 'results', 'unknown', 'UNKNOWN_REALM'));
     });
+
+    it('includes typeId when provided with realm and instance', () => {
+        const result = getResultsPath('EU05', 'development', 'Organization');
+        expect(result).toBe(path.join(process.cwd(), 'results', 'development', 'EU05', 'Organization'));
+    });
+
+    it('includes typeId with ALL_REALMS', () => {
+        const result = getResultsPath('ALL_REALMS', 'development', 'Order');
+        expect(result).toBe(path.join(process.cwd(), 'results', 'development', 'ALL_REALMS', 'Order'));
+    });
+
+    it('includes typeId when instanceType is derived from config', () => {
+        getInstanceType.mockReturnValue('development');
+        const result = getResultsPath('EU05', null, 'Organization');
+        expect(result).toBe(path.join(process.cwd(), 'results', 'development', 'EU05', 'Organization'));
+    });
 });
 
 // ============================================================================
@@ -100,6 +116,19 @@ describe('ensureResultsDir', () => {
         const dir2 = ensureResultsDir('EU05', 'development');
         expect(dir1).toBe(dir2);
         expect(fs.existsSync(dir2)).toBe(true);
+    });
+
+    it('creates typeId subdirectory when provided', () => {
+        const dir = ensureResultsDir('EU05', 'development', 'Organization');
+        expect(fs.existsSync(dir)).toBe(true);
+        expect(dir).toContain('Organization');
+        expect(dir).toContain('EU05');
+    });
+
+    it('creates nested typeId directory structure', () => {
+        const dir = ensureResultsDir('ALL_REALMS', 'development', 'Order');
+        expect(fs.existsSync(dir)).toBe(true);
+        expect(dir).toMatch(/development[\\\/]ALL_REALMS[\\\/]Order/);
     });
 });
 

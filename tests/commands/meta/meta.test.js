@@ -22,7 +22,8 @@ vi.mock('../../../src/commands/prompts/index.js', () => ({
     consolidateMetaPrompt: vi.fn(() => [{ name: 'consolidate', type: 'confirm' }]),
     consolidationFailurePrompt: vi.fn(() => [{ name: 'continueAnyway', type: 'confirm' }]),
     confirmCommitPrompt: vi.fn(() => [{ name: 'confirmCommit', type: 'confirm' }]),
-    commitMessagePrompt: vi.fn(() => [{ name: 'commitMsg', type: 'input' }])
+    commitMessagePrompt: vi.fn(() => [{ name: 'commitMsg', type: 'input' }]),
+    typeIdPrompt: vi.fn(() => [{ name: 'typeId', type: 'list', choices: [] }])
 }));
 
 vi.mock('../../../src/commands/meta/helpers/metaFileCleanup.js', () => ({
@@ -44,7 +45,9 @@ vi.mock('../../../src/commands/meta/helpers/metaFileCleanup.js', () => ({
     stripCustomPrefix: vi.fn(id => id.startsWith('c_') ? id.slice(2) : id),
     loadMetaCleanupLogic: vi.fn(() => null),
     updateMetaCleanupLogicExcludedPaths: vi.fn(),
-    enrichRegionalGroups: vi.fn(() => ({ enriched: [], skipped: [] }))
+    enrichRegionalGroups: vi.fn(() => ({ enriched: [], skipped: [] })),
+    getCoreMetaDir: vi.fn(() => '/mock/core/meta'),
+    discoverTypeIds: vi.fn(() => ['SitePreferences'])
 }));
 
 vi.mock('../../../src/commands/meta/helpers/metaConsolidation.js', () => ({
@@ -303,7 +306,8 @@ describe('metaCleanup', () => {
         hasUncommittedChanges.mockReturnValueOnce(true);
 
         inquirer.prompt
-            .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ repository: 'repo-a' })   // repositoryPrompt
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' }) // typeIdPrompt
             .mockResolvedValueOnce({ proceed: false }); // abort at uncommitted warning
 
         await triggerMetaCleanup();
@@ -317,6 +321,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })
             .mockResolvedValueOnce({ proceed: false });
 
         await triggerMetaCleanup();
@@ -330,6 +335,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })        // repositoryPrompt
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })   // typeIdPrompt
             .mockResolvedValueOnce({ deletionLevel: 'P3' })         // deletionLevelPrompt
             .mockResolvedValueOnce({ deletionSource: 'per-realm' }) // deletionSourcePrompt
             .mockResolvedValueOnce({ branchStrategy: 'new' })       // branchStrategyPrompt
@@ -362,6 +368,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })
             .mockResolvedValueOnce({ deletionLevel: 'P1' })
             .mockResolvedValueOnce({ deletionSource: 'per-realm' })
             .mockResolvedValueOnce({ branchStrategy: 'new' })
@@ -383,6 +390,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })
             .mockResolvedValueOnce({ deletionLevel: 'P3' })
             .mockResolvedValueOnce({ deletionSource: 'per-realm' })
             .mockResolvedValueOnce({ branchStrategy: 'new' })
@@ -418,6 +426,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })
             .mockResolvedValueOnce({ deletionLevel: 'P3' })
             .mockResolvedValueOnce({ deletionSource: 'per-realm' })
             .mockResolvedValueOnce({ branchStrategy: 'new' })
@@ -442,6 +451,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })
             .mockResolvedValueOnce({ deletionLevel: 'P3' })
             .mockResolvedValueOnce({ deletionSource: 'per-realm' })
             .mockResolvedValueOnce({ branchStrategy: 'new' })
@@ -466,6 +476,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })
             .mockResolvedValueOnce({ deletionLevel: 'P3' })
             .mockResolvedValueOnce({ deletionSource: 'per-realm' })
             .mockResolvedValueOnce({ branchStrategy: 'new' })
@@ -488,6 +499,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })
             .mockResolvedValueOnce({ deletionLevel: 'P3' })
             .mockResolvedValueOnce({ deletionSource: 'per-realm' })
             .mockResolvedValueOnce({ branchStrategy: 'new' })
@@ -525,6 +537,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })
             .mockResolvedValueOnce({ deletionLevel: 'P1' })
             .mockResolvedValueOnce({ deletionSource: 'per-realm' });
 
@@ -547,6 +560,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })
             .mockResolvedValueOnce({ deletionLevel: 'P3' })
             .mockResolvedValueOnce({ deletionSource: 'per-realm' })
             .mockResolvedValueOnce({ branchStrategy: 'new' })
@@ -576,6 +590,7 @@ describe('metaCleanup', () => {
 
         inquirer.prompt
             .mockResolvedValueOnce({ repository: 'repo-a' })
+            .mockResolvedValueOnce({ typeId: 'SitePreferences' })
             .mockResolvedValueOnce({ deletionLevel: 'P3' })
             .mockResolvedValueOnce({ deletionSource: 'per-realm' })
             .mockResolvedValueOnce({ branchStrategy: 'new' })

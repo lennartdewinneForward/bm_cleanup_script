@@ -3,6 +3,24 @@ import { IDENTIFIERS, LOG_PREFIX, BACKUP_CONFIG } from '../../config/constants.j
 import { logSectionTitle } from '../../scripts/loggingScript/log.js';
 import { checkBackupStatusForRealms } from '../../io/backupUtils.js';
 
+export const cleanupSourceTypePrompt = () => ([
+    {
+        type: 'rawlist',
+        name: 'cleanupSourceType',
+        message: 'What type of cleanup metadata do you want to work with?',
+        choices: [
+            {
+                name: 'Site Preferences (from analyze-preferences)',
+                value: 'preferences'
+            },
+            {
+                name: 'Custom Attributes (from analyze-custom-attributes)',
+                value: 'custom-attributes'
+            }
+        ]
+    }
+]);
+
 export const deletionSourcePrompt = () => ([
     {
         type: 'rawlist',

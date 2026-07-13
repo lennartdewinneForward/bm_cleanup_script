@@ -8,7 +8,10 @@ import { RealmProgressDisplay } from '../../../scripts/loggingScript/progressDis
 import * as prompts from '../../prompts/index.js';
 import { LOG_PREFIX, IDENTIFIERS, FILE_PATTERNS } from '../../../config/constants.js';
 import { logSectionTitle, logRuntime } from '../../../scripts/loggingScript/log.js';
-import { getAllAttributeDefinitionsFromMetadata } from '../../../io/siteXmlHelper.js';
+import {
+    getAllAttributeDefinitionsFromMetadata,
+    getAllTypeIdsFromMetadata
+} from '../../../io/siteXmlHelper.js';
 import {
     scanAttributeUsageInCode,
     generateCustomAttributeDeletionCandidates
@@ -35,6 +38,7 @@ export async function analyzeCustomAttributes() {
     const repositoryPaths = repositoryAnswers.repositories.map(
         repo => path.join(path.dirname(process.cwd()), repo)
     );
+    const repoNames = repositoryPaths.map(p => path.basename(p));
 
     const selection = await prompts.resolveRealmScopeSelection(inquirer.prompt);
     const realmsToProcess = selection.realmList;
@@ -43,12 +47,84 @@ export async function analyzeCustomAttributes() {
         return;
     }
 
-    const objectType = IDENTIFIERS.ORDER;
+    const useCachedBackup = await prompts.promptBackupCachePreference(realmsToProcess, IDENTIFIERS.ORDER);
 
-    const useCachedBackup = await prompts.promptBackupCachePreference(realmsToProcess, objectType);
+    // --- STEP 1B: Extract Available Type-IDs from Metadata ---
+    logSectionTitle('STEP 1B: Discovering Available Type-IDs');
+
+    const firstRealm = realmsToProcess[0];
+    const firstRealmInstanceType = getInstanceType(firstRealm);
+    let availableTypeIds = [];
+
+    try {
+        const tempResult = await refreshMetadataBackupForRealm(
+            firstRealm, firstRealmInstanceType,
+            { forceJobExecution: !useCachedBackup }
+        );
+
+        if (tempResult.ok) {
+            availableTypeIds = await getAllTypeIdsFromMetadata(tempResult.filePath);
+            console.log(
+                `${LOG_PREFIX.INFO} Found ${availableTypeIds.length} type-id(s) in metadata: `
+                + `${availableTypeIds.join(', ')}`
+            );
+        }
+    } catch (error) {
+        console.log(
+            `${LOG_PREFIX.WARNING} Failed to extract type-ids from ${firstRealm}: ${error.message}`
+        );
+    }
+
+    if (availableTypeIds.length === 0) {
+        console.log(`\n${LOG_PREFIX.ERROR} No type-ids found in metadata. Aborting.\n`);
+        return;
+    }
+
+    // --- STEP 1C: Select Type-IDs to Analyze ---
+    logSectionTitle('STEP 1C: Select Type-IDs to Analyze');
+
+    const typeIdAnswers = await inquirer.prompt(
+        prompts.selectTypeIdsPrompt(availableTypeIds)
+    );
+
+    const selectedTypeIds = prompts.processTypeIdSelection(
+        typeIdAnswers.selectedTypeIds,
+        availableTypeIds
+    );
+
+    console.log(
+        `${LOG_PREFIX.INFO} Selected ${selectedTypeIds.length} type-id(s): ${selectedTypeIds.join(', ')}`
+    );
+    console.log('');
 
     // --- STEP 2: Download Metadata & Extract Attribute Definitions ---
     logSectionTitle('STEP 2: Download Metadata & Extract Attribute Definitions');
+
+    // Process each selected type-id
+    for (const objectType of selectedTypeIds) {
+        console.log(`\n${LOG_PREFIX.INFO} Processing type-id: ${objectType}`);
+        await analyzeTypeId(
+            objectType,
+            realmsToProcess,
+            repositoryPaths,
+            repoNames,
+            useCachedBackup
+        );
+    }
+
+    logRuntime(timer);
+}
+
+/**
+ * Analyze a single type-id across all realms
+ * @param {string} objectType - The type-id to analyze
+ * @param {Array<string>} realmsToProcess - List of realms
+ * @param {Array<string>} repositoryPaths - List of repository paths
+ * @param {Array<string>} repoNames - List of repository names
+ * @param {boolean} useCachedBackup - Whether to use cached backups
+ * @private
+ */
+async function analyzeTypeId(objectType, realmsToProcess, repositoryPaths, repoNames, useCachedBackup) {
 
     const realmEntries = realmsToProcess.map(realm => ({
         realm,
@@ -57,7 +133,6 @@ export async function analyzeCustomAttributes() {
 
     if (realmEntries.length === 0) {
         console.log(`\n${LOG_PREFIX.ERROR} No realms to process. Aborting.\n`);
-        logRuntime(timer);
         return;
     }
 
@@ -158,7 +233,6 @@ export async function analyzeCustomAttributes() {
         }
         if (failures.length === allResults.length) {
             console.log(`\n${LOG_PREFIX.ERROR} All realms failed. Aborting.\n`);
-            logRuntime(timer);
             return;
         }
     }
@@ -183,7 +257,6 @@ export async function analyzeCustomAttributes() {
     // --- STEP 3: Scan Code for Attribute References ---
     logSectionTitle('STEP 3: Scan Code for Attribute References');
 
-    const repoNames = repositoryPaths.map(p => path.basename(p));
     const repoLabel = repoNames.length === 1
         ? repoNames[0]
         : `${repoNames.length} repositories`;
@@ -263,7 +336,7 @@ export async function analyzeCustomAttributes() {
     console.log('');
 
     // Write ALL_REALMS unused/used summary files (quick reference)
-    const allRealmsDir = ensureResultsDir(IDENTIFIERS.ALL_REALMS, instanceType);
+    const allRealmsDir = ensureResultsDir(IDENTIFIERS.ALL_REALMS, instanceType, objectType);
 
     if (scanResults.unused.length > 0) {
         const unusedFile = path.join(
@@ -395,7 +468,6 @@ export async function analyzeCustomAttributes() {
     }
 
     console.log('');
-    logRuntime(timer);
 }
 
 /**

@@ -51,6 +51,7 @@ export function buildCreateSafeBody(attributeDefinition) {
 
 /**
  * Check if a backup file exists and get its age in days
+ * Finds the latest backup file (not just today's) and checks its age.
  * @param {string} realm - Realm name
  * @param {string} instanceType - Instance type
  * @param {string} objectType - Object type (e.g., "SitePreferences")
@@ -58,12 +59,29 @@ export function buildCreateSafeBody(attributeDefinition) {
  */
 export async function checkBackupFileAge(realm, instanceType, objectType) {
     const backupDir = path.join(process.cwd(), DIRECTORIES.BACKUP, instanceType);
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
-    const filename = `${realm}_${objectType}${FILE_PATTERNS.BACKUP_SUFFIX}${timestamp}.json`;
-    const filePath = path.join(backupDir, filename);
 
     try {
-        await fs.access(filePath);
+        // Find all backup files for this realm and objectType
+        const entries = await fs.readdir(backupDir);
+        const backupPattern = `${realm}_${objectType}${FILE_PATTERNS.BACKUP_SUFFIX}`;
+        const matchingFiles = entries
+            .filter(f => f.startsWith(backupPattern) && f.endsWith('.json'))
+            .sort()
+            .reverse();
+
+        if (matchingFiles.length === 0) {
+            return {
+                exists: false,
+                filePath: null,
+                ageInDays: null,
+                backup: null
+            };
+        }
+
+        // Use the latest backup file (first after reverse sort)
+        const latestFilename = matchingFiles[0];
+        const filePath = path.join(backupDir, latestFilename);
+
         const backup = await loadBackupFile(filePath);
         const backupDate = new Date(backup.backup_date);
         const now = new Date();
@@ -78,7 +96,7 @@ export async function checkBackupFileAge(realm, instanceType, objectType) {
     } catch {
         return {
             exists: false,
-            filePath,
+            filePath: null,
             ageInDays: null,
             backup: null
         };

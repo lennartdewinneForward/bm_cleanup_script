@@ -16,7 +16,8 @@ import {
     consolidationFailurePrompt,
     confirmCommitPrompt,
     commitMessagePrompt,
-    debugBatchContinuePrompt
+    debugBatchContinuePrompt,
+    typeIdPrompt
 } from '../../prompts/index.js';
 import {
     buildMetaCleanupPlan,
@@ -27,7 +28,9 @@ import {
     formatPreferenceValueResults,
     stripCustomPrefix,
     loadMetaCleanupLogic,
-    enrichRegionalGroups
+    enrichRegionalGroups,
+    discoverTypeIds,
+    getCoreMetaDir
 } from '../helpers/metaFileCleanup.js';
 import {
     validateMetaChanges,
@@ -81,6 +84,18 @@ export async function metaCleanup(options = {}) {
     const siblingAnswers = await inquirer.prompt(await repositoryPrompt(siblings));
     const repoPath = path.join(path.dirname(process.cwd()), siblingAnswers.repository);
 
+    // --- STEP 1b: Select type-id ---
+    const coreMetaDir = getCoreMetaDir(repoPath);
+    const availableTypeIds = discoverTypeIds(coreMetaDir);
+
+    if (availableTypeIds.length === 0) {
+        console.log('  No type-extension definitions found in core meta directory.');
+        return;
+    }
+
+    const { typeId } = await inquirer.prompt(typeIdPrompt(availableTypeIds));
+    console.log(`  Selected type-id: ${typeId}\n`);
+
     // --- STEP 2: Show repo status ---
     const currentBranch = getCurrentBranch(repoPath);
     console.log(`  Repository: ${repoPath}`);
@@ -114,51 +129,72 @@ export async function metaCleanup(options = {}) {
     }
 
     const instanceType = instanceTypeOverride || getInstanceType(realmList[0]);
+    const isSitePreferences = typeId === 'SitePreferences';
 
-    // --- STEP 4: Select deletion tier & source ---
+    // --- STEP 4–5: Load attributes (branched by type-id) ---
+    let realmPreferenceMap;
+    let selectedPreferenceIds;
+    let maxTier = null;
+    let useCrossRealm = false;
+    let metaCleanupLogic = null;
+
+    // Tier selection — applies to all type-ids
     const tierAnswers = await inquirer.prompt(deletionLevelPrompt());
-    const maxTier = tierAnswers.deletionLevel;
+    maxTier = tierAnswers.deletionLevel;
 
-    const { deletionSource } = await inquirer.prompt(deletionSourcePrompt());
-    const useCrossRealm = deletionSource === 'cross-realm';
+    if (isSitePreferences) {
+        const { deletionSource } = await inquirer.prompt(deletionSourcePrompt());
+        useCrossRealm = deletionSource === 'cross-realm';
+    }
 
-    // --- STEP 5: Load preferences & build plan ---
-    console.log(`\n  Loading deletion candidates up to tier ${maxTier}...`);
-    console.log(`  Source: ${useCrossRealm ? 'Cross-realm intersection' : 'Per-realm files'}`);
+    console.log(`\n  Loading ${typeId} deletion candidates up to tier ${maxTier}...`);
+    if (isSitePreferences) {
+        console.log(`  Source: ${useCrossRealm ? 'Cross-realm intersection' : 'Per-realm files'}`);
+    }
     console.log(`  Realms: ${realmList.join(', ')}`);
     console.log(`  Instance type: ${instanceType}\n`);
 
-    const { realmPreferenceMap, selectedPreferenceIds, totalPrefs } = loadDeletionCandidates({
-        realmList, instanceType, maxTier, useCrossRealm
+    const loaded = loadDeletionCandidates({
+        realmList,
+        instanceType,
+        maxTier,
+        useCrossRealm,
+        objectType: isSitePreferences ? undefined : typeId
     });
+    realmPreferenceMap = loaded.realmPreferenceMap;
+    selectedPreferenceIds = loaded.selectedPreferenceIds;
 
-    if (totalPrefs === 0) {
-        console.log('\n  No preferences to process. Run analyze-preferences first.\n');
+    if (loaded.totalPrefs === 0) {
+        console.log(
+            `\n  No ${typeId} deletion candidates found.`
+            + ' Run analyze-preferences first.\n'
+        );
         return;
     }
 
-    // Load Meta-cleanup-logic.json for migration awareness and excludedPaths
-    const metaCleanupLogic = loadMetaCleanupLogic(instanceType);
-    if (metaCleanupLogic) {
-        console.log(
-            `  Meta-cleanup-logic: ${metaCleanupLogic.totalEntries} entries`
-            + ` (${metaCleanupLogic.mismatchCount} cross-realm mismatches)`
-        );
-        if (metaCleanupLogic.excludedPaths.length > 0) {
+    if (isSitePreferences) {
+        metaCleanupLogic = loadMetaCleanupLogic(instanceType);
+        if (metaCleanupLogic) {
             console.log(
-                `  Protected paths from previous migrations: ${metaCleanupLogic.excludedPaths.length}`
+                `  Meta-cleanup-logic: ${metaCleanupLogic.totalEntries} entries`
+                + ` (${metaCleanupLogic.mismatchCount} cross-realm mismatches)`
             );
+            if (metaCleanupLogic.excludedPaths.length > 0) {
+                console.log(
+                    `  Protected paths from previous migrations: ${metaCleanupLogic.excludedPaths.length}`
+                );
+            }
+        } else {
+            console.log('  Meta-cleanup-logic.json not found — run analyze-preferences first for'
+                + ' cross-realm migration support.');
         }
-    } else {
-        console.log('  Meta-cleanup-logic.json not found — run analyze-preferences first for'
-            + ' cross-realm migration support.');
     }
 
     const allInstanceRealms = getRealmsByInstanceType(instanceType);
 
     // --- Build and show full plan first ---
     const fullPlan = buildMetaCleanupPlan(
-        repoPath, realmPreferenceMap, allInstanceRealms, { crossRealm: useCrossRealm }
+        repoPath, realmPreferenceMap, allInstanceRealms, { crossRealm: useCrossRealm, typeId }
     );
 
     console.log(formatCleanupPlan(fullPlan));
@@ -183,9 +219,10 @@ export async function metaCleanup(options = {}) {
             baseBranchPrompt(branches, currentBranch)
         );
 
-        const suggestedName = generateCleanupBranchName(
-            `${maxTier}-${instanceType}`
-        );
+        const branchSuffix = isSitePreferences
+            ? `${maxTier}-${instanceType}`
+            : `${typeId}-${instanceType}`;
+        const suggestedName = generateCleanupBranchName(branchSuffix);
 
         const { branchName: newBranchName } = await inquirer.prompt(
             branchNamePrompt(suggestedName, branches)
@@ -230,7 +267,7 @@ export async function metaCleanup(options = {}) {
             // Slice the realmPreferenceMap to only include this batch's IDs
             const batchMap = sliceRealmPreferenceMap(realmPreferenceMap, batchIds);
             const batchPlan = buildMetaCleanupPlan(
-                repoPath, batchMap, allInstanceRealms, { crossRealm: useCrossRealm }
+                repoPath, batchMap, allInstanceRealms, { crossRealm: useCrossRealm, typeId }
             );
 
             console.log(formatCleanupPlan(batchPlan));
@@ -255,7 +292,7 @@ export async function metaCleanup(options = {}) {
             }
 
             console.log('');
-            const batchResults = executeMetaCleanupPlan(batchPlan, { dryRun: false, excludedPaths });
+            const batchResults = executeMetaCleanupPlan(batchPlan, { dryRun: false, excludedPaths, typeId });
             console.log(formatExecutionResults(batchResults));
             mergeExecutionResults(aggregatedResults, batchResults, batchPlan);
 
@@ -284,7 +321,7 @@ export async function metaCleanup(options = {}) {
 
                     const restMap = sliceRealmPreferenceMap(realmPreferenceMap, restIds);
                     const restPlan = buildMetaCleanupPlan(
-                        repoPath, restMap, allInstanceRealms, { crossRealm: useCrossRealm }
+                        repoPath, restMap, allInstanceRealms, { crossRealm: useCrossRealm, typeId }
                     );
 
                     console.log(formatCleanupPlan(restPlan));
@@ -300,7 +337,7 @@ export async function metaCleanup(options = {}) {
                         if (confirmRest) {
                             console.log('');
                             const restResults = executeMetaCleanupPlan(
-                                restPlan, { dryRun: false, excludedPaths }
+                                restPlan, { dryRun: false, excludedPaths, typeId }
                             );
                             console.log(formatExecutionResults(restResults));
                             mergeExecutionResults(aggregatedResults, restResults, restPlan);
@@ -327,31 +364,33 @@ export async function metaCleanup(options = {}) {
         }
 
         console.log('');
-        const results = executeMetaCleanupPlan(fullPlan, { dryRun: false, excludedPaths });
+        const results = executeMetaCleanupPlan(fullPlan, { dryRun: false, excludedPaths, typeId });
         console.log(formatExecutionResults(results));
         mergeExecutionResults(aggregatedResults, results, fullPlan);
     }
 
-    // --- STEP 8a: Remove orphaned preference values ---
-    console.log('\n  Cleaning preference values from preferences.xml files...');
-    const prefValueResults = removePreferenceValuesFromSites({
-        repoPath,
-        preferenceIds: selectedPreferenceIds
-    });
-    console.log(formatPreferenceValueResults(prefValueResults));
+    // --- STEP 8a: Remove orphaned preference values (SitePreferences only) ---
+    if (isSitePreferences) {
+        console.log('\n  Cleaning preference values from preferences.xml files...');
+        const prefValueResults = removePreferenceValuesFromSites({
+            repoPath,
+            preferenceIds: selectedPreferenceIds
+        });
+        console.log(formatPreferenceValueResults(prefValueResults));
 
-    if (prefValueResults.totalRemoved > 0) {
-        aggregatedResults.filesModified.push(
-            ...prefValueResults.filesModified
-                .map(rel => path.join(repoPath, rel))
-        );
+        if (prefValueResults.totalRemoved > 0) {
+            aggregatedResults.filesModified.push(
+                ...prefValueResults.filesModified
+                    .map(rel => path.join(repoPath, rel))
+            );
+        }
+
+        runCrossRealmScanIfNeeded({ useCrossRealm, repoPath, selectedPreferenceIds });
     }
-
-    runCrossRealmScanIfNeeded({ useCrossRealm, repoPath, selectedPreferenceIds });
 
     // --- STEP 8b: Enrich regional groups with core attribute references ---
     console.log('\n  Enriching regional meta files with core group references...');
-    const enrichResult = enrichRegionalGroups({ repoPath, realmList });
+    const enrichResult = enrichRegionalGroups({ repoPath, realmList, typeId });
 
     if (enrichResult.enriched.length > 0) {
         const totalAdded = enrichResult.enriched.reduce((sum, e) => sum + e.added, 0);
@@ -467,18 +506,20 @@ export async function metaCleanup(options = {}) {
         selectedPreferenceIds.map(stripCustomPrefix)
     )].sort();
 
-    const suggestedMsg = 'chore: remove '
-        + `${removedIds.length} unused site preference definition(s)`
-        + ` — ${maxTier} ${instanceType}`;
+    const suggestedMsg = isSitePreferences
+        ? `chore: remove ${removedIds.length} unused site preference definition(s)`
+            + ` — ${maxTier} ${instanceType}`
+        : `chore: remove ${removedIds.length} ${typeId} attribute definition(s)`
+            + ` — ${instanceType}`;
 
     const { commitMsg } = await inquirer.prompt(
         commitMessagePrompt(suggestedMsg)
     );
 
     // Build commit body with source context, selected level, and attribute list
-    const tierDesc = TIER_DESCRIPTIONS[maxTier] || maxTier;
+    const tierDesc = isSitePreferences ? (TIER_DESCRIPTIONS[maxTier] || maxTier) : typeId;
     const commitBody = buildCommitBody({
-        useCrossRealm, maxTier, tierDesc, executedActions: aggregatedResults.executedActions
+        useCrossRealm, maxTier: maxTier || typeId, tierDesc, executedActions: aggregatedResults.executedActions
     });
 
     const committed = commitChanges(

@@ -142,6 +142,34 @@ export const commitMessagePrompt = (suggestedMsg) => ([{
 }]);
 
 /**
+ * Select which type-id to clean up from meta XML files.
+ * @param {string[]} typeIds - Available type-id values discovered from the repository
+ * @returns {Object[]} Inquirer prompt config — answer key: `typeId`
+ */
+export const typeIdPrompt = (typeIds) => ([{
+    name: 'typeId',
+    type: 'list',
+    message: 'Which type-id should be cleaned up?',
+    choices: typeIds.map(id => ({ name: id, value: id })),
+    default: typeIds.includes('SitePreferences') ? 'SitePreferences' : typeIds[0]
+}]);
+
+/**
+ * Select which attributes to remove for a non-SitePreferences type-id.
+ * Presents a checkbox list of all discovered attribute-definition IDs.
+ * @param {string} typeId - The selected type-id
+ * @param {string[]} attributeIds - Available attribute IDs discovered from the repository
+ * @returns {Object[]} Inquirer prompt config — answer key: `selectedAttributes`
+ */
+export const attributeSelectionPrompt = (typeId, attributeIds) => ([{
+    name: 'selectedAttributes',
+    type: 'checkbox',
+    message: `Select attributes to remove from ${typeId} (${attributeIds.length} found):`,
+    choices: attributeIds.map(id => ({ name: id, value: id })),
+    validate: (answer) => answer.length > 0 ? true : 'Select at least one attribute.'
+}]);
+
+/**
  * Ask the user how to continue after a debug batch completes.
  * @param {number} processed - Number of preferences processed so far
  * @param {number} remaining - Number of preferences remaining

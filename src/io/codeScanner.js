@@ -117,6 +117,8 @@ function countScannableFiles(dirPath) {
 /**
  * Check whether a line contains a genuine preference access pattern for the given ID.
  * Matches: string literals ('PrefId' / "PrefId"), dot access (.custom.PrefId),
+ * variable dot access (xyzCustom.PrefId — handles destructured custom objects like orderCustom),
+ * getCustom() method access (.getCustom().PrefId — e.g. order.getCustom().attrId),
  * bracket access (.custom['PrefId'] / .custom["PrefId"]),
  * OCAPI c_ prefixed variants ('c_PrefId', .c_PrefId, ['c_PrefId']),
  * and SFCC query syntax (custom.PrefId at word boundary).
@@ -130,12 +132,17 @@ export function isPreferenceAccessMatch(line, preferenceId) {
 
     // Match: 'PrefId' | "PrefId"
     //   | .custom.PrefId (word boundary) | custom.PrefId (word boundary before custom)
+    //   | xyzCustom.PrefId (variable holding custom object, e.g. orderCustom.attrId)
+    //   | .getCustom().PrefId (method call, e.g. order.getCustom().radialWalletType)
     //   | .custom['PrefId'] | .custom["PrefId"]
     //   | 'c_PrefId' | "c_PrefId" | .c_PrefId | ['c_PrefId']
     const pattern = new RegExp(
         `['"]${escaped}['"]`
         + `|\\bcustom\\.${escaped}\\b`
+        + `|\\w*[Cc]ustom\\.${escaped}\\b`
+        + `|\\.getCustom\\(\\)\\.${escaped}\\b`
         + `|\\.custom\\[\\s*['"]${escaped}['"]\\s*\\]`
+        + `|\\*custom\\[\\s*['"]${escaped}['"]\\s*\\]`
         + `|['"]c_${escaped}['"]`
         + `|\\.c_${escaped}\\b`
         + `|\\[\\s*['"]c_${escaped}['"]\\s*\\]`
@@ -3073,7 +3080,7 @@ export function generateCustomAttributeDeletionCandidates({
     objectType,
     repoNames
 }) {
-    const resultsDir = ensureResultsDir(IDENTIFIERS.ALL_REALMS, instanceType);
+    const resultsDir = ensureResultsDir(IDENTIFIERS.ALL_REALMS, instanceType, objectType);
 
     // Load per-realm active cartridge sets
     const perRealmCartridges = buildPerRealmCartridgeSet(instanceType);
@@ -3344,7 +3351,7 @@ function generatePerRealmCustomAttrDeletionFiles({
     const perRealmTiers = new Map();
 
     for (const realm of allRealms) {
-        const realmResultsDir = ensureResultsDir(realm, instanceType);
+        const realmResultsDir = ensureResultsDir(realm, instanceType, objectType);
         const realmCarts = perRealmCartridges.get(realm) || new Set();
         const realmAttributes = perRealmMetadata.get(realm) || null;
 
@@ -3529,7 +3536,7 @@ function writeCustomAttrCombinedRealmFile({
 }) {
     const filePath = path.join(
         resultsDir,
-        `${instanceType}${FILE_PATTERNS.CUSTOM_ATTR_COMBINED_REALMS}`
+        `${objectType}${FILE_PATTERNS.CUSTOM_ATTR_COMBINED_REALMS}`
     );
 
     const lines = [
@@ -3637,7 +3644,7 @@ function writeCustomAttrCrossRealmFile({
 
     const filePath = path.join(
         resultsDir,
-        `${instanceType}${FILE_PATTERNS.CUSTOM_ATTR_CROSS_REALM}`
+        `${objectType}${FILE_PATTERNS.CUSTOM_ATTR_CROSS_REALM}`
     );
 
     const lines = [

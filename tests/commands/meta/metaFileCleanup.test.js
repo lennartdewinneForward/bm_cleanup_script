@@ -35,6 +35,7 @@ import {
     enrichRegionalGroups
 } from '../../../src/commands/meta/helpers/metaFileCleanup.js';
 import { getSandboxConfig } from '../../../src/config/helpers/helpers.js';
+import { findLatestMetadataFile } from '../../../src/io/codeScanner.js';
 
 // ============================================================================
 // Helper: create a minimal SitePreferences meta XML file
@@ -1540,6 +1541,217 @@ describe('executeMetaCleanupPlan — create-realm-file fallback paths', () => {
         expect(fs.existsSync(targetFilePath)).toBe(true);
         const content = fs.readFileSync(targetFilePath, 'utf-8');
         expect(content).toContain('newRealmAttr');
+    });
+});
+
+// ============================================================================
+// executeMetaCleanupPlan — BM backup fallback for missing definitions
+// ============================================================================
+
+describe('executeMetaCleanupPlan — BM backup definition fallback', () => {
+    let tmpDir;
+
+    beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'meta-bm-fallback-'));
+        vi.spyOn(console, 'log').mockImplementation(() => {});
+        findLatestMetadataFile.mockReset();
+    });
+
+    afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        console.log.mockRestore();
+        findLatestMetadataFile.mockReturnValue(null);
+    });
+
+    it('uses BM backup definition when core file has group ref but no attribute-definition', () => {
+        const coreDir = path.join(tmpDir, 'core', 'meta');
+        const realmDir = path.join(tmpDir, 'realm', 'meta');
+        fs.mkdirSync(coreDir, { recursive: true });
+        fs.mkdirSync(realmDir, { recursive: true });
+
+        // Core file has only a group assignment — no definition
+        const coreXml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+            + '<metadata xmlns="http://www.demandware.com/xml/impex/metadata/2006-10-31">\n'
+            + '    <type-extension type-id="SitePreferences">\n'
+            + '        <group-definitions>\n'
+            + '            <attribute-group group-id="Integration">\n'
+            + '                <display-name xml:lang="x-default">Integration</display-name>\n'
+            + '                <attribute attribute-id="webhookEnabled"/>\n'
+            + '            </attribute-group>\n'
+            + '        </group-definitions>\n'
+            + '    </type-extension>\n'
+            + '</metadata>\n';
+        const coreFilePath = path.join(coreDir, 'meta.xml');
+        fs.writeFileSync(coreFilePath, coreXml, 'utf-8');
+
+        // BM backup XML contains the full definition
+        const bmXml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+            + '<metadata xmlns="http://www.demandware.com/xml/impex/metadata/2006-10-31">\n'
+            + '    <type-extension type-id="SitePreferences">\n'
+            + '        <custom-attribute-definitions>\n'
+            + '            <attribute-definition attribute-id="webhookEnabled">\n'
+            + '                <display-name xml:lang="x-default">Webhook Enabled</display-name>\n'
+            + '                <type>boolean</type>\n'
+            + '            </attribute-definition>\n'
+            + '        </custom-attribute-definitions>\n'
+            + '    </type-extension>\n'
+            + '</metadata>\n';
+        const bmXmlPath = path.join(tmpDir, 'EU05_meta_data_backup.xml');
+        fs.writeFileSync(bmXmlPath, bmXml, 'utf-8');
+
+        findLatestMetadataFile.mockReturnValue(bmXmlPath);
+
+        const targetFilePath = path.join(realmDir, 'meta.xml');
+
+        const plan = {
+            actions: [{
+                type: 'create-realm-file', attributeId: 'webhookEnabled',
+                filePath: coreFilePath, targetFilePath,
+                realm: 'EU05', typeId: 'SitePreferences',
+                reason: 'move to realm'
+            }],
+            warnings: [], skipped: [],
+            realmPreferenceMap: new Map(), repoPath: tmpDir
+        };
+
+        executeMetaCleanupPlan(plan);
+
+        const content = fs.readFileSync(targetFilePath, 'utf-8');
+        expect(content).toContain('<attribute-definition attribute-id="webhookEnabled">');
+        expect(content).toContain('<type>boolean</type>');
+        expect(content).toContain('<attribute attribute-id="webhookEnabled"/>');
+    });
+
+    it('uses BM backup definition for custom-attribute typeId (Order)', () => {
+        const coreDir = path.join(tmpDir, 'core', 'meta');
+        const realmDir = path.join(tmpDir, 'realm', 'meta');
+        fs.mkdirSync(coreDir, { recursive: true });
+        fs.mkdirSync(realmDir, { recursive: true });
+
+        // Core file has Order group ref but no Order definition (definition only in BM)
+        const coreXml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+            + '<metadata xmlns="http://www.demandware.com/xml/impex/metadata/2006-10-31">\n'
+            + '    <type-extension type-id="Order">\n'
+            + '        <group-definitions>\n'
+            + '            <attribute-group group-id="Fulfillment">\n'
+            + '                <display-name xml:lang="x-default">Fulfillment</display-name>\n'
+            + '                <attribute attribute-id="trackingRef"/>\n'
+            + '            </attribute-group>\n'
+            + '        </group-definitions>\n'
+            + '    </type-extension>\n'
+            + '</metadata>\n';
+        const coreFilePath = path.join(coreDir, 'meta.xml');
+        fs.writeFileSync(coreFilePath, coreXml, 'utf-8');
+
+        const bmXml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+            + '<metadata xmlns="http://www.demandware.com/xml/impex/metadata/2006-10-31">\n'
+            + '    <type-extension type-id="Order">\n'
+            + '        <custom-attribute-definitions>\n'
+            + '            <attribute-definition attribute-id="trackingRef">\n'
+            + '                <display-name xml:lang="x-default">Tracking Ref</display-name>\n'
+            + '                <type>string</type>\n'
+            + '                <min-length>0</min-length>\n'
+            + '            </attribute-definition>\n'
+            + '        </custom-attribute-definitions>\n'
+            + '    </type-extension>\n'
+            + '</metadata>\n';
+        const bmXmlPath = path.join(tmpDir, 'EU05_meta_data_backup.xml');
+        fs.writeFileSync(bmXmlPath, bmXml, 'utf-8');
+
+        findLatestMetadataFile.mockReturnValue(bmXmlPath);
+
+        const targetFilePath = path.join(realmDir, 'meta.xml');
+
+        const plan = {
+            actions: [{
+                type: 'create-realm-file', attributeId: 'trackingRef',
+                filePath: coreFilePath, targetFilePath,
+                realm: 'EU05', typeId: 'Order',
+                reason: 'move to realm'
+            }],
+            warnings: [], skipped: [],
+            realmPreferenceMap: new Map(), repoPath: tmpDir
+        };
+
+        executeMetaCleanupPlan(plan);
+
+        const content = fs.readFileSync(targetFilePath, 'utf-8');
+        expect(content).toContain('type-id="Order"');
+        expect(content).toContain('<attribute-definition attribute-id="trackingRef">');
+        expect(content).toContain('<min-length>0</min-length>');
+        expect(content).toContain('<attribute attribute-id="trackingRef"/>');
+    });
+
+    it('appends BM backup definition when target file exists but lacks the definition', () => {
+        const coreDir = path.join(tmpDir, 'core', 'meta');
+        const realmDir = path.join(tmpDir, 'realm', 'meta');
+        fs.mkdirSync(coreDir, { recursive: true });
+        fs.mkdirSync(realmDir, { recursive: true });
+
+        const coreXml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+            + '<metadata xmlns="http://www.demandware.com/xml/impex/metadata/2006-10-31">\n'
+            + '    <type-extension type-id="SitePreferences">\n'
+            + '        <group-definitions>\n'
+            + '            <attribute-group group-id="Misc">\n'
+            + '                <display-name xml:lang="x-default">Misc</display-name>\n'
+            + '                <attribute attribute-id="featureFlag"/>\n'
+            + '            </attribute-group>\n'
+            + '        </group-definitions>\n'
+            + '    </type-extension>\n'
+            + '</metadata>\n';
+        fs.writeFileSync(path.join(coreDir, 'meta.xml'), coreXml, 'utf-8');
+
+        // Target realm file already exists with unrelated attributes + definitions section
+        const existingRealmXml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+            + '<metadata xmlns="http://www.demandware.com/xml/impex/metadata/2006-10-31">\n'
+            + '    <type-extension type-id="SitePreferences">\n'
+            + '        <custom-attribute-definitions>\n'
+            + '            <attribute-definition attribute-id="otherAttr">\n'
+            + '                <type>string</type>\n'
+            + '            </attribute-definition>\n'
+            + '        </custom-attribute-definitions>\n'
+            + '        <group-definitions>\n'
+            + '            <attribute-group group-id="Misc">\n'
+            + '                <display-name xml:lang="x-default">Misc</display-name>\n'
+            + '            </attribute-group>\n'
+            + '        </group-definitions>\n'
+            + '    </type-extension>\n'
+            + '</metadata>\n';
+        const targetFilePath = path.join(realmDir, 'meta.xml');
+        fs.writeFileSync(targetFilePath, existingRealmXml, 'utf-8');
+
+        const bmXml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+            + '<metadata xmlns="http://www.demandware.com/xml/impex/metadata/2006-10-31">\n'
+            + '    <type-extension type-id="SitePreferences">\n'
+            + '        <custom-attribute-definitions>\n'
+            + '            <attribute-definition attribute-id="featureFlag">\n'
+            + '                <type>boolean</type>\n'
+            + '            </attribute-definition>\n'
+            + '        </custom-attribute-definitions>\n'
+            + '    </type-extension>\n'
+            + '</metadata>\n';
+        const bmXmlPath = path.join(tmpDir, 'EU05_meta_data_backup.xml');
+        fs.writeFileSync(bmXmlPath, bmXml, 'utf-8');
+
+        findLatestMetadataFile.mockReturnValue(bmXmlPath);
+
+        const plan = {
+            actions: [{
+                type: 'create-realm-file', attributeId: 'featureFlag',
+                filePath: path.join(coreDir, 'meta.xml'), targetFilePath,
+                realm: 'EU05', typeId: 'SitePreferences',
+                reason: 'move to realm'
+            }],
+            warnings: [], skipped: [],
+            realmPreferenceMap: new Map(), repoPath: tmpDir
+        };
+
+        executeMetaCleanupPlan(plan);
+
+        const content = fs.readFileSync(targetFilePath, 'utf-8');
+        // Definition must have been added from BM backup
+        expect(content).toContain('<attribute-definition attribute-id="featureFlag">');
+        expect(content).toContain('<attribute attribute-id="featureFlag"/>');
     });
 });
 

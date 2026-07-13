@@ -22,29 +22,25 @@ import {
 } from '../../../config/helpers/helpers.js';
 import { getResultsPath } from '../../../io/util.js';
 import {
-    findLatestMetadataFile,
-    parseSitePreferencesFromMetadata
+    findLatestMetadataFile
 } from '../../../io/codeScanner.js';
 
 /**
- * Regex to detect a SitePreferences type-extension block inside XML content.
- */
-const SITE_PREF_TYPE_EXTENSION = /type-id=["']SitePreferences["']/i;
-
-/**
- * Extract the `<type-extension type-id="SitePreferences">...</type-extension>` block
- * from a multi-type-extension XML file.  Returns the full SitePreferences section
+ * Extract a `<type-extension type-id="{typeId}">...</type-extension>` block
+ * from a multi-type-extension XML file. Returns the full section
  * (including its opening and closing tags), or null if the file doesn't contain one.
  *
  * This prevents extraction helpers (extractAttributeDefinition, extractContainingGroup)
- * from matching definitions or group-assignments in non-SitePreferences sections
- * (e.g., Product, Order, OrganizationPreferences) which share the same file.
+ * from matching definitions or group-assignments in unrelated type-extension sections.
  *
  * @param {string} xmlContent - Raw XML string (potentially multi-type-extension)
- * @returns {string|null} The SitePreferences type-extension block, or null
+ * @param {string} typeId - The type-id value to extract (e.g. 'SitePreferences', 'Product')
+ * @returns {string|null} The matching type-extension block, or null
  */
-export function extractSitePreferencesBlock(xmlContent) {
-    const startPattern = /<type-extension\s+type-id=["']SitePreferences["'][^>]*>/i;
+export function extractTypeExtensionBlock(xmlContent, typeId) {
+    const startPattern = new RegExp(
+        `<type-extension\\s+type-id=["']${escapeRegex(typeId)}["'][^>]*>`, 'i'
+    );
     const startMatch = xmlContent.match(startPattern);
     if (!startMatch) {
         return null;
@@ -58,6 +54,75 @@ export function extractSitePreferencesBlock(xmlContent) {
     }
 
     return rest.slice(0, endIdx + '</type-extension>'.length);
+}
+
+/**
+ * Extract the `<type-extension type-id="SitePreferences">...</type-extension>` block.
+ * Convenience wrapper around extractTypeExtensionBlock.
+ *
+ * @param {string} xmlContent - Raw XML string (potentially multi-type-extension)
+ * @returns {string|null} The SitePreferences type-extension block, or null
+ */
+export function extractSitePreferencesBlock(xmlContent) {
+    return extractTypeExtensionBlock(xmlContent, 'SitePreferences');
+}
+
+/**
+ * Discover all distinct type-id values from meta XML files in a directory.
+ * Scans every .xml file and extracts type-id attributes from type-extension elements.
+ *
+ * @param {string} metaDir - Absolute path to a meta/ directory
+ * @returns {string[]} Sorted array of unique type-id values
+ */
+export function discoverTypeIds(metaDir) {
+    if (!fs.existsSync(metaDir)) {
+        return [];
+    }
+
+    const typeIds = new Set();
+    const xmlFiles = fs.readdirSync(metaDir)
+        .filter(name => name.endsWith('.xml'))
+        .map(name => path.join(metaDir, name));
+
+    for (const filePath of xmlFiles) {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const matches = content.matchAll(/type-extension\s+type-id=["']([^"']+)["']/gi);
+        for (const match of matches) {
+            typeIds.add(match[1]);
+        }
+    }
+
+    return [...typeIds].sort();
+}
+
+/**
+ * Discover all attribute-definition IDs within a specific type-extension block
+ * across all XML files in a meta directory.
+ *
+ * @param {string} metaDir - Absolute path to a meta/ directory
+ * @param {string} typeId - The type-id to scope to (e.g. 'Order', 'Product')
+ * @returns {string[]} Sorted array of unique attribute IDs (bare, no c_ prefix)
+ */
+export function discoverAttributeIdsForType(metaDir, typeId) {
+    const files = listSitePrefMetaFiles(metaDir, typeId);
+    const attributeIds = new Set();
+
+    for (const filePath of files) {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const block = extractTypeExtensionBlock(content, typeId);
+        if (!block) {
+            continue;
+        }
+
+        const matches = block.matchAll(
+            /attribute-definition\s+attribute-id=["']([^"']+)["']/gi
+        );
+        for (const match of matches) {
+            attributeIds.add(match[1]);
+        }
+    }
+
+    return [...attributeIds].sort();
 }
 
 // ============================================================================
@@ -74,9 +139,10 @@ export function extractSitePreferencesBlock(xmlContent) {
  * @private
  */
 function removeAttributeDefinition(xmlContent, attributeId) {
-    // Match the full attribute-definition element including leading whitespace and trailing newline
+    // Match both bare ID and c_-prefixed ID — SFCC type-extension XMLs store
+    // custom attribute IDs with the c_ prefix (e.g. attribute-id="c_myAttr").
     const pattern = new RegExp(
-        `[ \\t]*<attribute-definition\\s+attribute-id="${escapeRegex(attributeId)}"[^>]*>` +
+        `[ \\t]*<attribute-definition\\s+attribute-id="(?:c_)?${escapeRegex(attributeId)}"[^>]*>` +
         '[\\s\\S]*?</attribute-definition>[ \\t]*\\n?',
         'g'
     );
@@ -95,9 +161,10 @@ function removeAttributeDefinition(xmlContent, attributeId) {
  * @private
  */
 function removeGroupAssignment(xmlContent, attributeId) {
-    // Match self-closing attribute element with leading/trailing horizontal whitespace and newline
+    // Match both bare ID and c_-prefixed ID — SFCC type-extension XMLs store
+    // custom attribute IDs with the c_ prefix (e.g. attribute-id="c_myAttr").
     const pattern = new RegExp(
-        `[ \\t]*<attribute\\s+attribute-id="${escapeRegex(attributeId)}"\\s*/>[ \\t]*\\n?`,
+        `[ \\t]*<attribute\\s+attribute-id="(?:c_)?${escapeRegex(attributeId)}"\\s*/>[ \\t]*\\n?`,
         'g'
     );
 
@@ -227,27 +294,30 @@ function reindentBlock(block, indent) {
 // ============================================================================
 
 /**
- * List all XML files in a directory that contain SitePreferences definitions.
+ * List all XML files in a directory that contain definitions for a given type-id.
  *
  * Scans every .xml file and returns only those whose content includes a
- * `<type-extension type-id="SitePreferences">` block. This catches all naming
+ * `<type-extension type-id="{typeId}">` block. This catches all naming
  * conventions: meta.system.sitepreference.*, meta.system.Globale.xml,
  * metadata.system.*, system-objecttype-extensions-*, meta.custom.*, etc.
  *
  * @param {string} metaDir - Absolute path to a meta/ directory
+ * @param {string} [typeId='SitePreferences'] - The type-id to filter by
  * @returns {string[]} Array of absolute file paths
  */
-export function listSitePrefMetaFiles(metaDir) {
+export function listSitePrefMetaFiles(metaDir, typeId = 'SitePreferences') {
     if (!fs.existsSync(metaDir)) {
         return [];
     }
+
+    const typeIdPattern = new RegExp(`type-id=["']${escapeRegex(typeId)}["']`, 'i');
 
     return fs.readdirSync(metaDir)
         .filter(name => name.endsWith('.xml'))
         .map(name => path.join(metaDir, name))
         .filter(filePath => {
             const content = fs.readFileSync(filePath, 'utf-8');
-            return SITE_PREF_TYPE_EXTENSION.test(content);
+            return typeIdPattern.test(content);
         });
 }
 
@@ -257,16 +327,20 @@ export function listSitePrefMetaFiles(metaDir) {
  *
  * @param {string} metaDir - Absolute path to meta/ directory
  * @param {string} attributeId - Bare attribute ID (no c_ prefix)
+ * @param {string} [typeId='SitePreferences'] - The type-id to filter by
  * @returns {string[]} Array of file paths that contain the attribute
  * @private
  */
-function findFilesContainingAttribute(metaDir, attributeId) {
-    const files = listSitePrefMetaFiles(metaDir);
+function findFilesContainingAttribute(metaDir, attributeId, typeId = 'SitePreferences') {
+    const files = listSitePrefMetaFiles(metaDir, typeId);
     const matches = [];
 
     for (const filePath of files) {
         const content = fs.readFileSync(filePath, 'utf-8');
-        const idPattern = new RegExp(`attribute-id="${escapeRegex(attributeId)}"`, 'i');
+        // Match both bare ID and c_-prefixed ID — SFCC type-extension XMLs store
+        // custom attribute IDs with the c_ prefix (e.g. attribute-id="c_myAttr"),
+        // while deletion files store them without it (derived from BM backup XML).
+        const idPattern = new RegExp(`attribute-id="(?:c_)?${escapeRegex(attributeId)}"`, 'i');
         if (idPattern.test(content)) {
             matches.push(filePath);
         }
@@ -282,21 +356,22 @@ function findFilesContainingAttribute(metaDir, attributeId) {
  *
  * @param {string} metaDir - Absolute path to meta/ directory
  * @param {string} attributeId - Bare attribute ID (no c_ prefix)
+ * @param {string} [typeId='SitePreferences'] - The type-id to filter by
  * @returns {string[]} Array of file paths that contain the definition
  * @private
  */
-function findFilesContainingDefinition(metaDir, attributeId) {
-    const files = listSitePrefMetaFiles(metaDir);
+function findFilesContainingDefinition(metaDir, attributeId, typeId = 'SitePreferences') {
+    const files = listSitePrefMetaFiles(metaDir, typeId);
     const matches = [];
 
     for (const filePath of files) {
         const content = fs.readFileSync(filePath, 'utf-8');
-        // Scope to the SitePreferences type-extension so we don't match
-        // definitions from other type-extensions (e.g., Product, Order)
-        // that happen to share the same file.
-        const scopedContent = extractSitePreferencesBlock(content) || content;
+        // Scope to the selected type-extension so we don't match
+        // definitions from other type-extensions that share the same file.
+        const scopedContent = extractTypeExtensionBlock(content, typeId) || content;
+        // Match both bare ID and c_-prefixed ID (same reason as findFilesContainingAttribute).
         const defPattern = new RegExp(
-            `<attribute-definition\\s+attribute-id="${escapeRegex(attributeId)}"`, 'i'
+            `<attribute-definition\\s+attribute-id="(?:c_)?${escapeRegex(attributeId)}"`, 'i'
         );
         if (defPattern.test(scopedContent)) {
             matches.push(filePath);
@@ -518,6 +593,49 @@ export function updateMetaCleanupLogicExcludedPaths(instanceType, newPaths) {
  */
 
 /**
+ * Parse all attribute-definition IDs for a given type-id from a BM metadata backup XML.
+ * Used to validate whether an attribute exists in an SFCC instance before creating
+ * realm-specific meta files.
+ *
+ * Unlike parseSitePreferencesFromMetadata (which only reads SitePreferences), this
+ * function works for any type-id (e.g. 'Order', 'Product', 'SitePreferences').
+ *
+ * @param {string} xmlFilePath - Absolute path to the BM metadata backup XML
+ * @param {string} typeId - The SFCC type-id to parse (e.g. 'Order', 'SitePreferences')
+ * @returns {Set<string>} Set of attribute IDs found in the specified type-extension block
+ * @private
+ */
+function parseAttributeIdsFromMetadataForType(xmlFilePath, typeId) {
+    const attributeIds = new Set();
+    const content = fs.readFileSync(xmlFilePath, 'utf-8');
+    const lines = content.split(/\r?\n/);
+
+    let inTypeBlock = false;
+
+    for (const line of lines) {
+        if (line.includes(`type-id="${typeId}"`)) {
+            inTypeBlock = true;
+            continue;
+        }
+
+        if (inTypeBlock && line.includes('</type-extension>')) {
+            break;
+        }
+
+        if (inTypeBlock) {
+            const match = line.match(/attribute-definition\s+attribute-id="([^"]+)"/);
+            if (match) {
+                // Strip c_ prefix so IDs can be compared against bare deletion-file IDs
+                const rawId = match[1];
+                attributeIds.add(rawId.startsWith('c_') ? rawId.slice(2) : rawId);
+            }
+        }
+    }
+
+    return attributeIds;
+}
+
+/**
  * Build a cleanup plan for removing preferences from meta files.
  *
  * Given a map of realm → preference IDs to delete, determines what actions
@@ -529,9 +647,10 @@ export function updateMetaCleanupLogicExcludedPaths(instanceType, newPaths) {
  * @param {Object} [options] - Planning options
  * @param {boolean} [options.crossRealm=false] - When true, skip move logic (cross-realm means
  *   all attributes are confirmed unused everywhere — just remove, never move to remaining realms)
+ * @param {string} [options.typeId='SitePreferences'] - The type-id to target in meta XML files
  * @returns {MetaCleanupPlan} Plan describing all file operations needed
  */
-export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfiguredRealms, { crossRealm = false } = {}) {
+export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfiguredRealms, { crossRealm = false, typeId = 'SitePreferences' } = {}) {
     const actions = [];
     const warnings = [];
     const skipped = [];
@@ -605,7 +724,7 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
                 continue;
             }
 
-            const realmFiles = findFilesContainingAttribute(realmMetaDir, bareId);
+            const realmFiles = findFilesContainingAttribute(realmMetaDir, bareId, typeId);
 
             for (const filePath of realmFiles) {
                 actions.push({
@@ -619,7 +738,7 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
         }
 
         // Step 2: Handle core meta directory
-        const coreFiles = findFilesContainingAttribute(coreMetaDir, bareId);
+        const coreFiles = findFilesContainingAttribute(coreMetaDir, bareId, typeId);
 
         if (coreFiles.length === 0) {
             // Not in core — nothing more to do
@@ -648,7 +767,7 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
             // Only use core files that contain the actual attribute-definition (not just
             // a group assignment). Files with only a group assignment ref would produce
             // realm files without definitions — an invalid state.
-            const coreDefinitionFiles = findFilesContainingDefinition(coreMetaDir, bareId);
+            const coreDefinitionFiles = findFilesContainingDefinition(coreMetaDir, bareId, typeId);
             // Deduplicate by physical directory so we don't create the same file twice
             // when multiple remaining realms share a directory.
             const copiedDirs = new Set();
@@ -670,8 +789,12 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
 
                     const targetFilePath = path.join(remainingMetaDir, coreFileName);
 
-                    // Check if the remaining realm already has this attribute
-                    const realmAlreadyHas = findFilesContainingAttribute(remainingMetaDir, bareId);
+                    // Check if the remaining realm already has the attribute DEFINITION.
+                    // Using findFilesContainingAttribute here would also match group-assignment
+                    // lines (<attribute attribute-id="X"/>), causing us to skip definition
+                    // creation for realms that only have a group-ref but no definition block.
+                    // That would leave orphaned group assignments after core is removed.
+                    const realmAlreadyHas = findFilesContainingDefinition(remainingMetaDir, bareId, typeId);
 
                     if (realmAlreadyHas.length === 0) {
                         // Verify the attribute actually exists on this realm's SFCC instance
@@ -682,7 +805,7 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
                             bmAttributeCache.set(
                                 remainingRealm,
                                 bmFile
-                                    ? parseSitePreferencesFromMetadata(bmFile)
+                                    ? parseAttributeIdsFromMetadataForType(bmFile, typeId)
                                     : null
                             );
                         }
@@ -737,6 +860,7 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
  * @param {boolean} [options.dryRun=false] - If true, only log what would happen
  * @param {string[]} [options.excludedPaths=[]] - Paths protected from removal (populated by
  *   Meta-cleanup-logic.json after previous migration runs)
+ * @param {string} [options.typeId='SitePreferences'] - The type-id being cleaned up
  * @returns {{
  *   filesModified: string[],
  *   filesDeleted: string[],
@@ -744,7 +868,7 @@ export function buildMetaCleanupPlan(repoPath, realmPreferenceMap, allConfigured
  *   errors: Array<{action: MetaCleanupAction, error: Error}>
  * }}
  */
-export function executeMetaCleanupPlan(plan, { dryRun = false, excludedPaths = [] } = {}) {
+export function executeMetaCleanupPlan(plan, { dryRun = false, excludedPaths = [], typeId = 'SitePreferences' } = {}) {
     const excludedSet = new Set(excludedPaths.map(p => path.resolve(p)));
     const filesModified = new Set();
     const filesDeleted = new Set();
@@ -766,7 +890,10 @@ export function executeMetaCleanupPlan(plan, { dryRun = false, excludedPaths = [
             );
 
             if (!dryRun) {
-                createRealmMetaFile(action.filePath, action.targetFilePath, action.attributeId);
+                createRealmMetaFile(
+                    action.filePath, action.targetFilePath,
+                    action.attributeId, action.typeId || typeId, action.realm
+                );
                 filesCreated.add(action.targetFilePath);
             }
         } catch (error) {
@@ -874,9 +1001,11 @@ export function executeMetaCleanupPlan(plan, { dryRun = false, excludedPaths = [
  * @param {string} coreFilePath - Absolute path to the core meta file
  * @param {string} targetFilePath - Absolute path to the realm meta file
  * @param {string} attributeId - Bare attribute ID to keep
+ * @param {string} [typeId='SitePreferences'] - The type-id to scope extraction to
+ * @param {string} [realm] - Realm name used as BM backup fallback when core has no definition
  * @private
  */
-function createRealmMetaFile(coreFilePath, targetFilePath, attributeId) {
+function createRealmMetaFile(coreFilePath, targetFilePath, attributeId, typeId = 'SitePreferences', realm = null) {
     const targetDir = path.dirname(targetFilePath);
 
     // Ensure the meta directory exists
@@ -885,31 +1014,44 @@ function createRealmMetaFile(coreFilePath, targetFilePath, attributeId) {
     }
 
     const rawContent = fs.readFileSync(coreFilePath, 'utf-8');
-    // Scope to the SitePreferences type-extension so extraction helpers
+    // Scope to the selected type-extension so extraction helpers
     // don't match definitions or groups from other type-extensions
-    // (e.g., Product, Order) that share the same file.
-    const coreContent = extractSitePreferencesBlock(rawContent) || rawContent;
+    // that share the same file.
+    const coreContent = extractTypeExtensionBlock(rawContent, typeId) || rawContent;
 
     if (fs.existsSync(targetFilePath)) {
         // Target file already exists — append the attribute definition and group assignment
-        appendAttributeToExistingFile(targetFilePath, coreContent, attributeId);
+        appendAttributeToExistingFile(targetFilePath, coreContent, attributeId, realm);
         return;
     }
 
     // Extract only the target attribute's definition and group assignment from core
-    const extractedDef = extractAttributeDefinition(coreContent, attributeId);
+    let extractedDef = extractAttributeDefinition(coreContent, attributeId);
     const extractedGrp = extractGroupAssignment(coreContent, attributeId);
     const groupBlock = extractContainingGroup(coreContent, attributeId);
 
+    // Fallback: if core has no definition (only a group-assignment ref), look in the BM backup
+    if (!extractedDef && realm) {
+        const bmFile = findLatestMetadataFile(realm);
+        if (bmFile) {
+            try {
+                const bmContent = fs.readFileSync(bmFile, 'utf-8');
+                extractedDef = extractAttributeDefinition(bmContent, attributeId);
+            } catch {
+                // BM backup unreadable — continue without definition fallback
+            }
+        }
+    }
+
     if (!extractedDef && !groupBlock && !extractedGrp) {
-        // Attribute not in the SitePreferences section — skip file creation
+        // Attribute not found in the type-extension section — skip file creation
         return;
     }
 
     // Build a minimal meta file
     let newContent = '<?xml version="1.0" encoding="UTF-8"?>\n'
         + '<metadata xmlns="http://www.demandware.com/xml/impex/metadata/2006-10-31">\n'
-        + '    <type-extension type-id="SitePreferences">\n';
+        + `    <type-extension type-id="${typeId}">\n`;
 
     if (extractedDef) {
         const reindentedDef = reindentBlock(extractedDef, '            ');
@@ -1025,9 +1167,10 @@ function buildMinimalGroupBlock(fullGroupBlock, attributeId) {
  * @param {string} targetFilePath - The existing realm meta file
  * @param {string} sourceContent - The core file content to extract from
  * @param {string} attributeId - Bare attribute ID
+ * @param {string} [realm] - Realm name used as BM backup fallback when core has no definition
  * @private
  */
-function appendAttributeToExistingFile(targetFilePath, sourceContent, attributeId) {
+function appendAttributeToExistingFile(targetFilePath, sourceContent, attributeId, realm = null) {
     let targetContent = fs.readFileSync(targetFilePath, 'utf-8');
 
     // Skip if this attribute already exists in the target file (prevent duplicates)
@@ -1039,10 +1182,25 @@ function appendAttributeToExistingFile(targetFilePath, sourceContent, attributeI
         return;
     }
 
-    const extractedDef = extractAttributeDefinition(sourceContent, attributeId);
+    let extractedDef = extractAttributeDefinition(sourceContent, attributeId);
     const extractedGrp = extractGroupAssignment(sourceContent, attributeId);
 
-    // Insert definition before </custom-attribute-definitions>
+    // Fallback: if core has no definition (only a group-assignment ref), look in the BM backup
+    if (!extractedDef && realm) {
+        const bmFile = findLatestMetadataFile(realm);
+        if (bmFile) {
+            try {
+                const bmContent = fs.readFileSync(bmFile, 'utf-8');
+                extractedDef = extractAttributeDefinition(bmContent, attributeId);
+            } catch {
+                // BM backup unreadable — continue without definition fallback
+            }
+        }
+    }
+
+    // Insert definition into <custom-attribute-definitions>. If that section does not
+    // exist yet (e.g. the realm file only contains group assignments), create the section
+    // before <group-definitions> or before </type-extension> as a fallback.
     if (extractedDef) {
         const defClosePattern = /([ \t]*)<\/custom-attribute-definitions>/;
         const defMatch = targetContent.match(defClosePattern);
@@ -1053,6 +1211,22 @@ function appendAttributeToExistingFile(targetFilePath, sourceContent, attributeI
                 defClosePattern,
                 `${reindentedDef}\n${defIndent}</custom-attribute-definitions>`
             );
+        } else {
+            // No <custom-attribute-definitions> section exists — inject a new one.
+            // Try to place it before <group-definitions>; fall back to </type-extension>.
+            const insertBeforePattern = /([ \t]*)(<group-definitions>|<\/type-extension>)/;
+            const insertMatch = targetContent.match(insertBeforePattern);
+            if (insertMatch) {
+                const sectionIndent = insertMatch[1];
+                const reindentedDef = reindentBlock(extractedDef, sectionIndent + '    ');
+                const newSection = `${sectionIndent}<custom-attribute-definitions>\n`
+                    + `${reindentedDef}\n`
+                    + `${sectionIndent}</custom-attribute-definitions>\n`;
+                targetContent = targetContent.replace(
+                    insertBeforePattern,
+                    `${newSection}${insertMatch[1]}${insertMatch[2]}`
+                );
+            }
         }
     }
 
@@ -1514,20 +1688,21 @@ function addCoreAttributesToRegionalGroups(regionalContent, coreGroupAssignments
  * @param {Object} options
  * @param {string} options.repoPath - Absolute path to the sibling repository
  * @param {string[]} options.realmList - Realm names to process
+ * @param {string} [options.typeId='SitePreferences'] - The type-id to target
  * @returns {{ enriched: Array<{realm: string, file: string, added: number}>, skipped: string[] }}
  */
-export function enrichRegionalGroups({ repoPath, realmList }) {
+export function enrichRegionalGroups({ repoPath, realmList, typeId = 'SitePreferences' }) {
     const coreMetaDir = getCoreMetaDir(repoPath);
     const enriched = [];
     const skipped = [];
 
     // Parse core group assignments from all core meta files
     const coreGroupAssignments = new Map();
-    const coreFiles = listSitePrefMetaFiles(coreMetaDir);
+    const coreFiles = listSitePrefMetaFiles(coreMetaDir, typeId);
 
     for (const coreFile of coreFiles) {
         const content = fs.readFileSync(coreFile, 'utf-8');
-        const spBlock = extractSitePreferencesBlock(content);
+        const spBlock = extractTypeExtensionBlock(content, typeId);
 
         if (!spBlock) {
             continue;
@@ -1572,7 +1747,7 @@ export function enrichRegionalGroups({ repoPath, realmList }) {
             continue;
         }
 
-        const realmFiles = listSitePrefMetaFiles(realmMetaDir);
+        const realmFiles = listSitePrefMetaFiles(realmMetaDir, typeId);
 
         for (const filePath of realmFiles) {
             const fileName = path.basename(filePath);

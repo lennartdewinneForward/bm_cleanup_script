@@ -7,7 +7,7 @@ config.json
 !config.example.json
 
 # Generated realm folders with outputs
-/results
+/results*
 /backup*
 /inspections
 
