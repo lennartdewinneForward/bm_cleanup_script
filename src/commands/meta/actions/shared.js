@@ -51,7 +51,7 @@ export function loadDeletionCandidates({ realmList, instanceType, maxTier, useCr
         missingRealms,
         filteredOutRealms
     } = useCrossRealm
-        ? buildCrossRealmPreferenceMap(realmList, instanceType, { maxTier })
+        ? buildCrossRealmPreferenceMap(realmList, instanceType, { maxTier, objectType })
         : buildRealmPreferenceMapFromFiles(realmList, instanceType, { maxTier, objectType });
 
     let totalPrefs = 0;

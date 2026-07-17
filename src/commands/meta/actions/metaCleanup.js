@@ -142,15 +142,11 @@ export async function metaCleanup(options = {}) {
     const tierAnswers = await inquirer.prompt(deletionLevelPrompt());
     maxTier = tierAnswers.deletionLevel;
 
-    if (isSitePreferences) {
-        const { deletionSource } = await inquirer.prompt(deletionSourcePrompt());
-        useCrossRealm = deletionSource === 'cross-realm';
-    }
+    const { deletionSource } = await inquirer.prompt(deletionSourcePrompt());
+    useCrossRealm = deletionSource === 'cross-realm';
 
     console.log(`\n  Loading ${typeId} deletion candidates up to tier ${maxTier}...`);
-    if (isSitePreferences) {
-        console.log(`  Source: ${useCrossRealm ? 'Cross-realm intersection' : 'Per-realm files'}`);
-    }
+    console.log(`  Source: ${useCrossRealm ? 'Cross-realm intersection' : 'Per-realm files'}`);
     console.log(`  Realms: ${realmList.join(', ')}`);
     console.log(`  Instance type: ${instanceType}\n`);
 

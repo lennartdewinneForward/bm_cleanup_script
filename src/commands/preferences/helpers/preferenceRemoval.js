@@ -215,9 +215,11 @@ export function buildRealmPreferenceMapFromFiles(selectedRealms, instanceType, {
  *   filePath: string|null
  * }}
  */
-export function buildCrossRealmPreferenceMap(selectedRealms, instanceType, { maxTier } = {}) {
-    const resultsDir = ensureResultsDir(IDENTIFIERS.ALL_REALMS, instanceType);
-    const filename = `${instanceType}${FILE_PATTERNS.PREFERENCES_CROSS_REALM}`;
+export function buildCrossRealmPreferenceMap(selectedRealms, instanceType, { maxTier, objectType } = {}) {
+    const resultsDir = ensureResultsDir(IDENTIFIERS.ALL_REALMS, instanceType, objectType || null);
+    const filename = objectType
+        ? `${objectType}${FILE_PATTERNS.CUSTOM_ATTR_CROSS_REALM}`
+        : `${instanceType}${FILE_PATTERNS.PREFERENCES_CROSS_REALM}`;
     const filePath = path.join(resultsDir, filename);
 
     if (!fs.existsSync(filePath)) {
