@@ -144,6 +144,23 @@ describe('isPreferenceAccessMatch', () => {
         )).toBe(true);
     });
 
+    // Prefs variable dot access — handles site preference holder variables (e.g. sitePrefs, prefs)
+    it('matches sitePrefs variable dot access (sitePrefs.prefId)', () => {
+        expect(isPreferenceAccessMatch('sitePrefs.disableforterorderupdate', 'disableforterorderupdate')).toBe(true);
+    });
+
+    it('matches prefs variable dot access (prefs.prefId)', () => {
+        expect(isPreferenceAccessMatch('prefs.enableSearch', 'enableSearch')).toBe(true);
+    });
+
+    it('matches sitePreferences variable dot access (sitePreferences.prefId)', () => {
+        expect(isPreferenceAccessMatch('sitePreferences.enableSearch', 'enableSearch')).toBe(true);
+    });
+
+    it('matches customPrefs variable dot access (customPrefs.prefId)', () => {
+        expect(isPreferenceAccessMatch('customPrefs.enableSearch', 'enableSearch')).toBe(true);
+    });
+
     it('rejects non-custom variable dot access (order.enableSearch)', () => {
         expect(isPreferenceAccessMatch('order.enableSearch', 'enableSearch')).toBe(false);
     });

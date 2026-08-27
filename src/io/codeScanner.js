@@ -118,6 +118,7 @@ function countScannableFiles(dirPath) {
  * Check whether a line contains a genuine preference access pattern for the given ID.
  * Matches: string literals ('PrefId' / "PrefId"), dot access (.custom.PrefId),
  * variable dot access (xyzCustom.PrefId — handles destructured custom objects like orderCustom),
+ * prefs variable access (sitePrefs.PrefId, prefs.PrefId, sitePreferences.PrefId, etc.),
  * getCustom() method access (.getCustom().PrefId — e.g. order.getCustom().attrId),
  * bracket access (.custom['PrefId'] / .custom["PrefId"]),
  * OCAPI c_ prefixed variants ('c_PrefId', .c_PrefId, ['c_PrefId']),
@@ -133,6 +134,7 @@ export function isPreferenceAccessMatch(line, preferenceId) {
     // Match: 'PrefId' | "PrefId"
     //   | .custom.PrefId (word boundary) | custom.PrefId (word boundary before custom)
     //   | xyzCustom.PrefId (variable holding custom object, e.g. orderCustom.attrId)
+    //   | sitePrefs.PrefId / prefs.PrefId / sitePreferences.PrefId (any *Pref* variable)
     //   | .getCustom().PrefId (method call, e.g. order.getCustom().radialWalletType)
     //   | .custom['PrefId'] | .custom["PrefId"]
     //   | 'c_PrefId' | "c_PrefId" | .c_PrefId | ['c_PrefId']
@@ -140,6 +142,7 @@ export function isPreferenceAccessMatch(line, preferenceId) {
         `['"]${escaped}['"]`
         + `|\\bcustom\\.${escaped}\\b`
         + `|\\w*[Cc]ustom\\.${escaped}\\b`
+        + `|\\w*[Pp]ref\\w*\\.${escaped}\\b`
         + `|\\.getCustom\\(\\)\\.${escaped}\\b`
         + `|\\.custom\\[\\s*['"]${escaped}['"]\\s*\\]`
         + `|\\*custom\\[\\s*['"]${escaped}['"]\\s*\\]`
